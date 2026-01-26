@@ -73,8 +73,12 @@ dev = [
 # ============================================================
 # CLI entrypoint
 # ============================================================
+# [project.scripts]
+# camera-probe = "camera_probe.cli.app:app"
+
 [project.scripts]
-camera-probe = "camera_probe.cli.app:app"
+camera-probe = "camera_probe.interface.cli.app:main"
+
 
 # ============================================================
 # Project URLs

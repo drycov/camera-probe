@@ -1,7 +1,5 @@
-from camera_probe.cli.app import app
-
-def main() -> None:
-    app()
+# camera_probe/__main__.py
+from camera_probe.interface.cli.app import main
 
 if __name__ == "__main__":
     main()
