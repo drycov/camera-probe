@@ -1,0 +1,9 @@
+
+# Инструменты для разработки
+pytest
+black
+ruff
+build
+twine
+hatchling
+typer

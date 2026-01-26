@@ -1,0 +1,158 @@
+# ────────────────────────────────────────────────
+# Python
+# ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Poetry / Pipenv
+poetry.lock
+Pipfile.lock
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Mypy / Ruff / Pyright
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.dmypy.json
+
+# ────────────────────────────────────────────────
+# Logs & runtime
+# ────────────────────────────────────────────────
+*.log
+logs/
+*.pid
+
+# Uvicorn / Gunicorn
+gunicorn.pid
+uvicorn.pid
+
+# ────────────────────────────────────────────────
+# Environment & secrets
+# ────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# Vault / secrets
+secrets/
+vault/
+*.key
+*.pem
+
+# ────────────────────────────────────────────────
+# Mongo / data / dumps
+# ────────────────────────────────────────────────
+data/
+mongo-data/
+dump/
+*.bson
+*.json.bak
+
+# ────────────────────────────────────────────────
+# Camera / media / binary artifacts
+# ────────────────────────────────────────────────
+snapshots/
+previews/
+thumbnails/
+captures/
+*.jpg
+*.jpeg
+*.png
+*.mp4
+
+# ffmpeg temp
+*.ts
+*.m3u8
+
+# ────────────────────────────────────────────────
+# Async / multiprocessing
+# ────────────────────────────────────────────────
+*.sock
+*.ipc
+
+# ────────────────────────────────────────────────
+# Docker
+# ────────────────────────────────────────────────
+.dockerignore
+docker-compose.override.yml
+docker-compose.local.yml
+*.docker.env
+
+# Docker volumes (local only)
+docker-volumes/
+volumes/
+
+# ────────────────────────────────────────────────
+# IDEs
+# ────────────────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+
+# ────────────────────────────────────────────────
+# OS
+# ────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ────────────────────────────────────────────────
+# Project-specific
+# ────────────────────────────────────────────────
+
+# Camera probe cache
+.probe-cache/
+camera_probe_cache/
+
+# Inventory / sync artifacts
+inventory.tmp
+inventory.cache
+inventory-debug/
+
+# Local test configs
+config.local.yaml
+config.local.yml
+settings.local.py
+
+# Temporary exports / reports
+exports/
+reports/
+*.csv
+*.xlsx
+
+# ────────────────────────────────────────────────
+# Safety (production configs)
+# ────────────────────────────────────────────────
+config.prod.yaml
+config.prod.yml
+
+# ────────────────────────────────────────────────
+# Node / Frontend (safety-net)
+# ────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Vite / build output
+dist/
+.cache/

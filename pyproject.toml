@@ -1,0 +1,104 @@
+# ============================================================
+# Build system
+# ============================================================
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ============================================================
+# Project metadata
+# ============================================================
+[project]
+name = "camera-probe"
+description = "Async toolkit for probing IP cameras (Hikvision, Dahua, Axis)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+version = "0.3.0"
+
+keywords = [
+    "ip-camera",
+    "hikvision",
+    "dahua",
+    "axis",
+    "onvif",
+    "surveillance",
+    "network-discovery",
+]
+
+authors = [
+    { name = "Denis Rykov", email = "your@email.com" },
+]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: System :: Networking",
+    "Topic :: System :: Monitoring",
+    "Topic :: Security",
+]
+
+# ============================================================
+# Runtime dependencies
+# ============================================================
+dependencies = [
+    "aiohttp>=3.9",
+    "requests>=2.28",
+    "urllib3>=1.26",
+    "cachetools>=5.3",
+    "typer>=0.21.1",
+]
+
+# ============================================================
+# Optional dependencies
+# ============================================================
+[project.optional-dependencies]
+onvif = [
+    "onvif-zeep>=0.2.12",
+]
+
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "ruff",
+    "mypy",
+]
+
+# ============================================================
+# CLI entrypoint
+# ============================================================
+[project.scripts]
+camera-probe = "camera_probe.cli.app:app"
+
+# ============================================================
+# Project URLs
+# ============================================================
+[project.urls]
+Homepage = "https://github.com/drykov/camera-probe"
+Repository = "https://github.com/drykov/camera-probe"
+Issues = "https://github.com/drykov/camera-probe/issues"
+
+# ============================================================
+# setuptools configuration (SRC layout)
+# ============================================================
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+
+# ============================================================
+# Ruff (lint)
+# ============================================================
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+
