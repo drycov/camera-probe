@@ -181,7 +181,6 @@ def _print_human(result) -> None:
     typer.echo(f"IP:         {result.ip}")
     typer.echo(f"Vendor:     {result.vendor or '-'}")
     # typer.echo(f"Confidence: {result.confidence:.2f}")
-
     if result.model:
         typer.echo(f"Model:      {result.model}")
     if result.serial:

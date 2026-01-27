@@ -9,11 +9,11 @@ from camera_probe.clients.dahua.client import DahuaCgiClient
 from camera_probe.domain.models.probe_result import ProbeResult
 from camera_probe.infrastructure.adapters.base import BaseCameraAdapter
 from camera_probe.infrastructure.adapters.decorators import register_adapter
-from camera_probe.infrastructure.device.dahua import DahuaDeviceExtractor
-from camera_probe.infrastructure.device.factory import DeviceExtractorFactory
+
 from camera_probe.infrastructure.device.generic import GenericDeviceExtractor
 from camera_probe.infrastructure.device.registry import DeviceExtractorRegistry
 from camera_probe.infrastructure.extractor.factory import ExtractorFactory
+from camera_probe.infrastructure.extractor.null import NullDeviceExtractor
 from camera_probe.infrastructure.network.generic import GenericNetworkExtractor
 from camera_probe.infrastructure.network.registry import NetworkExtractorRegistry
 
@@ -36,10 +36,6 @@ class DahuaAdapter(BaseCameraAdapter):
             raw_network = await client.get_network_info()
             raw_version = await client.get_software_version()
 
-            logger.trace(raw_device)
-            logger.trace(raw_network)
-            logger.trace(raw_version)
-
         except Exception as exc:
             logger.exception(
                 "dahua adapter probe failed | ip=%s | error=%s",
@@ -57,7 +53,7 @@ class DahuaAdapter(BaseCameraAdapter):
             vendor="dahua",
             registry=DeviceExtractorRegistry,
             policy=ExtractorPolicy.OPTIONAL,
-            fallback_cls=GenericDeviceExtractor,
+            fallback_cls=NullDeviceExtractor
         )
 
         device_info = (
@@ -84,7 +80,7 @@ class DahuaAdapter(BaseCameraAdapter):
                 fallback_cls=GenericNetworkExtractor,
             )
             network = network_extractor.extract(raw_network)
-
+            
         # ──────────────────────────────────────────────
         # Assemble ProbeResult
         # ──────────────────────────────────────────────
@@ -95,11 +91,11 @@ class DahuaAdapter(BaseCameraAdapter):
             model=device_info.get("model") if device_info else None,
             serial=device_info.get("serial") if device_info else None,
             mac=(
-                network.mac
-                if network and network.mac
-                else device_info.get("mac") if device_info else None
+                # network.mac
+                # if network and network.mac
+                device_info.get("mac") if device_info else None
             ),
-            firmware=device_info.get("firmware") if device_info else None,
+            firmware=version_info.get("firmware") if version_info else None,
             network=network,
             raw={
                 "device": raw_device,

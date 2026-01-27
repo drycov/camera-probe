@@ -9,7 +9,7 @@ from camera_probe.infrastructure.network.auto_import import (
 )
 from camera_probe.infrastructure.network.registry import NetworkExtractorRegistry
 
-from camera_probe.infrastructure.adapters.auto_import import auto_import_adapters
+# from camera_probe.infrastructure.adapters.auto_import import auto_import_adapters
 
 
 def build_probe_service(
@@ -30,11 +30,11 @@ def build_probe_service(
     # 2️⃣ Adapters
     adapters = DefaultAdapterFactory()
 
-    # 3️⃣ Auto-import infrastructure (SIDE EFFECTS)
+    # # 3️⃣ Auto-import infrastructure (SIDE EFFECTS)
     auto_import_network_extractors("camera_probe.infrastructure.network")
-    auto_import_adapters("camera_probe.infrastructure.adapters")
+    # auto_import_adapters("camera_probe.infrastructure.adapters")
 
-    # 4️⃣ FREEZE registries (CRITICAL)
+    # # 4️⃣ FREEZE registries (CRITICAL)
     NetworkExtractorRegistry.freeze()
 
     return ProbeService(

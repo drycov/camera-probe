@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import logging
 import re
-from typing import Dict, Optional, List
+from typing import Dict
 from urllib.parse import urljoin
 
 from camera_probe.infrastructure.sdp.parse_sdp import extract_rtsp_vendor_markers, parse_sdp

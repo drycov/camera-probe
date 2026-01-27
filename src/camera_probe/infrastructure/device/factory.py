@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional, Protocol, TypeVar
+from typing import Optional, TypeVar
 
 from camera_probe.domain.ports.device_extractor import DeviceExtractor
 from camera_probe.infrastructure.device.registry import DeviceExtractorRegistry

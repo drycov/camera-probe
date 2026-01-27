@@ -6,7 +6,6 @@ import ipaddress
 from typing import Optional
 
 from camera_probe.domain.models.network_info import NetworkInfo
-from camera_probe.domain.ports.network_extractor import NetworkExtractor
 from camera_probe.infrastructure.network.decorators import register_network_extractor
 from camera_probe.infrastructure.xml.parser import extract_default_ns, parse_xml
 import logging

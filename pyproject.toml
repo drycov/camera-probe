@@ -102,7 +102,22 @@ where = ["src"]
 # Ruff (lint)
 # ============================================================
 [tool.ruff]
+target-version = "py311"
 line-length = 100
-target-version = "py39"
 
+# Включаем только детект мёртвого кода
+select = ["F401", "F841"]
+
+# Исключаем виртуальные окружения и мусор
+exclude = [
+    ".venv",
+    "venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+# Не трогаем __init__.py (часто используются для side-effect imports)
+ignore = ["F401"]
+per-file-ignores = { "__init__.py" = ["F401"] }
 

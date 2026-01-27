@@ -9,12 +9,9 @@ from camera_probe.clients.hikvision.client import HikvisionIsapiClient
 from camera_probe.domain.models.probe_result import ProbeResult
 from camera_probe.infrastructure.adapters.base import BaseCameraAdapter
 from camera_probe.infrastructure.adapters.decorators import register_adapter
-from camera_probe.infrastructure.device.factory import DeviceExtractorFactory
 from camera_probe.infrastructure.device.generic import GenericDeviceExtractor
-from camera_probe.infrastructure.device.hikvision import HikvisionDeviceExtractor
 from camera_probe.infrastructure.device.registry import DeviceExtractorRegistry
 from camera_probe.infrastructure.extractor.factory import ExtractorFactory
-from camera_probe.infrastructure.network.factory import NetworkExtractorFactory
 from camera_probe.infrastructure.network.generic import GenericNetworkExtractor
 from camera_probe.infrastructure.network.registry import NetworkExtractorRegistry
 
