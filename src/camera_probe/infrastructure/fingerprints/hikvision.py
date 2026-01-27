@@ -1,25 +1,24 @@
 # hikvision.py
 from camera_probe.infrastructure.fingerprints.base import Fingerprint
+from camera_probe.infrastructure.fingerprints.utils import EvidenceView
 
 
 class HikvisionFingerprint(Fingerprint):
     def match(self, evidence: dict) -> bool:
-        if "hikvision" in (evidence.get("rtsp_vendor_markers") or []):
+        view = EvidenceView(evidence)
+        if view.has_marker("rtsp_vendor_markers", "hikvision"):
             return True
 
-        if "hikvision" in (evidence.get("http_vendor_markers") or []):
+        if view.has_marker("http_vendor_markers", "hikvision"):
             return True
 
-        sdp = evidence.get("rtsp_sdp_raw", "").lower()
-        if "mediainfo" in sdp:
+        if view.text_contains("rtsp_sdp_raw", "mediainfo"):
             return True
 
-        realm = (evidence.get("realm") or "").lower()
-        if "hikvision" in realm:
+        if "hikvision" in view.text("realm"):
             return True
 
-        m = (evidence.get("onvif_manufacturer") or "").lower()
-        return "hikvision" in m
+        return "hikvision" in view.text("onvif_manufacturer")
 
     def vendor(self) -> str:
         return "Hikvision"
