@@ -13,13 +13,6 @@ from camera_probe.infrastructure.discovery.rtsp import rtsp_options
 from camera_probe.infrastructure.discovery.rtsp_describe import rtsp_describe
 from camera_probe.infrastructure.discovery.http import http_auth_fingerprint
 
-from camera_probe.infrastructure.discovery.onvif import onvif_probe
-from camera_probe.infrastructure.discovery.onvif_device import (
-    onvif_unicast_probe,
-    onvif_https_unicast_probe,
-    onvif_https_auth_probe,
-    onvif_get_device_information,
-)
 
 from camera_probe.infrastructure.fingerprints.registry import FingerprintRegistry
 from camera_probe.infrastructure.sdp.parse_sdp import aggregate_rtsp_vendor_markers
@@ -194,7 +187,7 @@ class DiscoveryEngine(DiscoveryPort):
             confidence = fp.confidence()
             self._update_stats(vendor)
 
-            logger.info(
+            logger.debug(
                 "Vendor detected (fingerprint): %s confidence=%.2f",
                 vendor,
                 confidence,

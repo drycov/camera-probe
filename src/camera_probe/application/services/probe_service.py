@@ -84,14 +84,18 @@ class ProbeService:
         detect: DetectResult,
         request: ProbeRequest,
     ) -> Optional[ProbeResult]:
-        adapter = self._adapters.create(
-            vendor=detect.vendor,
-            ip=request.ip,
-            username=request.username,
-            password=request.password,
-            timeout=request.timeout,
-        )
-        return await adapter.probe()
+        try:
+            adapter = self._adapters.create(
+                vendor=detect.vendor,
+                ip=request.ip,
+                username=request.username,
+                password=request.password,
+                timeout=request.timeout,
+            )
+            return await adapter.probe()
+        except Exception:
+            return None
+
 
     async def _force_probe(self, request: ProbeRequest) -> ProbeResult:
         adapter = self._adapters.create(

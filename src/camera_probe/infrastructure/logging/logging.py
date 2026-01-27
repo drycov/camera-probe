@@ -1,11 +1,21 @@
 # camera_probe/logging.py
+
 from __future__ import annotations
 
 import logging
 import sys
 
+import colorama
+
+from camera_probe.infrastructure.logging.pretty import indent_block, pretty_kv, pretty_xml
+colorama.just_fix_windows_console()
+
 TRACE_LEVEL = 5
 
+
+# ────────────────────────────────────────────────
+# TRACE level
+# ────────────────────────────────────────────────
 
 def _add_trace_level() -> None:
     if hasattr(logging, "TRACE"):
@@ -20,6 +30,60 @@ def _add_trace_level() -> None:
 
     logging.Logger.trace = trace  # type: ignore[attr-defined]
 
+
+# ────────────────────────────────────────────────
+# Color formatter
+# ────────────────────────────────────────────────
+
+
+class ColorFormatter(logging.Formatter):
+    RESET = "\033[0m"
+
+    COLORS = {
+        "TRACE": "\033[90m",
+        "DEBUG": "\033[36m",
+        "INFO": "\033[32m",
+        "WARNING": "\033[33m",
+        "ERROR": "\033[31m",
+        "CRITICAL": "\033[41m",
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        original_levelname = record.levelname
+        original_msg = record.msg
+
+        color = self.COLORS.get(record.levelname, "")
+
+        # ─────────────────────────────
+        # Colorize level
+        # ─────────────────────────────
+        if color:
+            record.levelname = f"{color}{record.levelname}{self.RESET}"
+
+        # ─────────────────────────────
+        # Pretty TRACE payload
+        # ─────────────────────────────
+        if original_levelname == "TRACE" and isinstance(record.msg, str):
+            msg = record.msg.strip()
+
+            if msg.startswith("<") and msg.endswith(">"):
+                msg = indent_block(pretty_xml(msg))
+
+            elif "=" in msg and msg.count("=") >= 2:
+                msg = indent_block(pretty_kv(msg))
+
+            record.msg = msg
+            record.args = ()
+
+        try:
+            return super().format(record)
+        finally:
+            record.levelname = original_levelname
+            record.msg = original_msg
+
+# ────────────────────────────────────────────────
+# Setup
+# ────────────────────────────────────────────────
 
 def setup_logging(*, level: str = "INFO") -> None:
     """
@@ -40,10 +104,10 @@ def setup_logging(*, level: str = "INFO") -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(numeric_level)
 
-    formatter = logging.Formatter(
+    formatter = ColorFormatter(
         fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    handler.setFormatter(formatter)
 
+    handler.setFormatter(formatter)
     root.addHandler(handler)

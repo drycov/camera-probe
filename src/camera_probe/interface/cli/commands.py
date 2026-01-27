@@ -14,13 +14,15 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
-
+import logging
 from camera_probe.application.dto.probe_request import ProbeRequest
 from camera_probe.application.schema.probe_result import probe_result_schema
 from camera_probe.application.serializers.probe_result import probe_result_to_dict
 from camera_probe.bootstrap.probe import build_probe_service
 from camera_probe.application.dto.scan_request import ScanRequest
 from camera_probe.bootstrap import build_scan_service
+
+logger = logging.getLogger(__name__)
 
 
 def probe(
@@ -177,9 +179,10 @@ def scan(
 
 
 def _print_human(result) -> None:
+    logger.trace(result)
     typer.echo(f"IP:         {result.ip}")
     typer.echo(f"Vendor:     {result.vendor or '-'}")
-    typer.echo(f"Confidence: {result.confidence:.2f}")
+    # typer.echo(f"Confidence: {result.confidence:.2f}")
 
     if result.model:
         typer.echo(f"Model:      {result.model}")
@@ -187,6 +190,9 @@ def _print_human(result) -> None:
         typer.echo(f"Serial:     {result.serial}")
     if result.mac:
         typer.echo(f"MAC:        {result.mac}")
+    if result.firmware:
+        typer.echo(f"Firmware:   {result.firmware}")
+
 
     if result.network:
         typer.echo("Network:")
@@ -194,6 +200,10 @@ def _print_human(result) -> None:
             typer.echo(f"  IP:       {result.network.ip}")
         if result.network.gateway:
             typer.echo(f"  Gateway:  {result.network.gateway}")
+        if result.network.mask:
+            typer.echo(f"  Netmask:  {result.network.mask}")
+        if result.network.subnet:
+            typer.echo(f"  Subnet:  {result.network.subnet}")
 
     if result.ntp:
         typer.echo("NTP:")

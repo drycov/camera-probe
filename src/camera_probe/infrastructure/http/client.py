@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Optional, Iterable
 from urllib.parse import urljoin
 
 import aiohttp
-import httpx
 import requests
 from requests.auth import HTTPDigestAuth, HTTPBasicAuth
 
@@ -15,14 +15,16 @@ logger = logging.getLogger(__name__)
 
 class HttpClient:
     """
-    Universal HTTP client for embedded devices.
+    Universal HTTP client for embedded devices (Hikvision / Dahua / OEM).
 
-    Contract:
-    - Digest → Basic → Anonymous
-    - requests.Session for real Digest (Hikvision-compatible)
-    - async wrapper via asyncio.to_thread
-    - HTTP / HTTPS base discovery
+    Principles:
+    - requests.Session + DigestAuth is the source of truth
+    - aiohttp ONLY for base URL discovery
+    - async via asyncio.to_thread
+    - never raises on HTTP errors
     """
+
+    BASE_TTL = 300  # seconds
 
     def __init__(
         self,
@@ -40,14 +42,16 @@ class HttpClient:
         self.try_anonymous = try_anonymous
 
         self._base_url: Optional[str] = None
+        self._base_ts: float = 0.0
 
         self._digest: Optional[HTTPDigestAuth] = None
         self._basic: Optional[HTTPBasicAuth] = None
+
         self._session: Optional[requests.Session] = None
 
-    # ────────────────────────────────────────────────
+    # ─────────────────────────────────────────────
     # Auth
-    # ────────────────────────────────────────────────
+    # ─────────────────────────────────────────────
 
     def set_auth(self, username: str | None, password: str | None) -> None:
         if not username or not password:
@@ -58,6 +62,14 @@ class HttpClient:
 
         session = requests.Session()
         session.auth = self._digest
+        session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "Accept": "application/xml",
+                "Connection": "close",
+            }
+        )
+
         self._session = session
 
     def close(self) -> None:
@@ -65,45 +77,65 @@ class HttpClient:
             self._session.close()
             self._session = None
 
-    # ────────────────────────────────────────────────
-    # Base URL discovery (aiohttp, HEAD)
-    # ────────────────────────────────────────────────
+    # ─────────────────────────────────────────────
+    # Base URL discovery (aiohttp)
+    # ─────────────────────────────────────────────
 
     async def get_base_url(
         self,
         test_paths: Iterable[str],
         ok_statuses: tuple[int, ...] = (200, 401, 403),
     ) -> Optional[str]:
-        if self._base_url:
+        if self._base_url and (time.monotonic() - self._base_ts) < self.BASE_TTL:
             return self._base_url
 
         schemes = ["https", "http"] if self.prefer_https else ["http", "https"]
 
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.timeout)
-        ) as session:
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             for scheme in schemes:
                 base = f"{scheme}://{self.ip}"
+
                 for path in test_paths:
                     url = urljoin(base, path)
+
+                    # HEAD
                     try:
                         async with session.head(
                             url,
-                            allow_redirects=False,
                             ssl=self.verify_ssl,
+                            allow_redirects=False,
                         ) as resp:
                             if resp.status in ok_statuses:
                                 self._base_url = base
-                                logger.debug("Base URL detected: %s", base)
+                                self._base_ts = time.monotonic()
+                                logger.debug("Base URL detected (HEAD): %s", base)
                                 return base
                     except Exception:
-                        continue
+                        pass
 
+                    # GET fallback (CRITICAL for Hikvision)
+                    try:
+                        async with session.get(
+                            url,
+                            ssl=self.verify_ssl,
+                            allow_redirects=False,
+                        ) as resp:
+                            if resp.status in ok_statuses:
+                                self._base_url = base
+                                self._base_ts = time.monotonic()
+                                logger.debug("Base URL detected (GET): %s", base)
+                                return base
+                    except Exception:
+                        pass
+
+        logger.warning("Base URL not found | ip=%s", self.ip)
         return None
 
-    # ────────────────────────────────────────────────
+    # ─────────────────────────────────────────────
     # Sync HTTP core (requests)
-    # ────────────────────────────────────────────────
+    # ─────────────────────────────────────────────
 
     def _request_sync(
         self,
@@ -114,7 +146,6 @@ class HttpClient:
         force_basic: bool = False,
     ) -> Optional[str]:
         url = urljoin(base, path)
-        r: Optional[requests.Response] = None
 
         try:
             # 0) Anonymous
@@ -127,21 +158,17 @@ class HttpClient:
                 if r.status_code == 200:
                     return r.text
 
-            # 1) DIGEST — CORRECT
-            if self._digest:
-                self._session.auth = self._digest
-
+            # 1) Digest (primary)
+            if self._session and self._digest:
                 r = self._session.get(
                     url,
                     timeout=self.timeout,
                     verify=self.verify_ssl,
                 )
-
                 if r.status_code == 200:
-                    logger.debug("HTTP OK (digest) | %s", path)
                     return r.text
 
-            # 2) BASIC fallback
+            # 2) Basic fallback
             if self._basic and (force_basic or (r and r.status_code == 401)):
                 r = requests.get(
                     url,
@@ -169,18 +196,17 @@ class HttpClient:
             )
             return None
 
-
-    # ────────────────────────────────────────────────
+    # ─────────────────────────────────────────────
     # Async wrapper
-    # ────────────────────────────────────────────────
+    # ─────────────────────────────────────────────
 
     async def get(
         self,
         path: str,
         *,
+        base_url: Optional[str] = None,
         allow_anonymous: bool = False,
         force_basic: bool = False,
-        base_url: Optional[str] = None,
     ) -> Optional[str]:
         base = base_url or self._base_url
         if not base:
@@ -193,34 +219,3 @@ class HttpClient:
             allow_anonymous=allow_anonymous,
             force_basic=force_basic,
         )
-
-    # ────────────────────────────────────────────────
-    # LOW-LEVEL RAW GET (discovery)
-    # ────────────────────────────────────────────────
-
-    async def raw_get(self, url: str) -> Optional[dict]:
-        """
-        Low-level HTTP GET.
-        - NEVER raises on HTTP status
-        - returns status + headers
-        - used by discovery
-        """
-        try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout,
-                verify=self.verify_ssl,
-                follow_redirects=False,
-                headers={"User-Agent": "camera-probe/1.0"},
-            ) as client:
-                r = await client.get(url)
-                return {
-                    "status": r.status_code,
-                    "headers": {k.lower(): v for k, v in r.headers.items()},
-                }
-        except httpx.RequestError as exc:
-            logger.trace(
-                "raw_get failed | url=%s | error=%s",
-                url,
-                type(exc).__name__,
-            )
-            return None
