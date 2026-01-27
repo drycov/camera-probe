@@ -179,7 +179,6 @@ def scan(
 
 
 def _print_human(result) -> None:
-    logger.trace(result)
     typer.echo(f"IP:         {result.ip}")
     typer.echo(f"Vendor:     {result.vendor or '-'}")
     # typer.echo(f"Confidence: {result.confidence:.2f}")
