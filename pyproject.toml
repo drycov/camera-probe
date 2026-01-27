@@ -27,7 +27,7 @@ keywords = [
 ]
 
 authors = [
-    { name = "Denis Rykov", email = "your@email.com" },
+    { name = "Denis Rykov", email = "drycov@gmail.com" },
 ]
 
 classifiers = [
@@ -84,9 +84,9 @@ camera-probe = "camera_probe.interface.cli.app:main"
 # Project URLs
 # ============================================================
 [project.urls]
-Homepage = "https://github.com/drykov/camera-probe"
-Repository = "https://github.com/drykov/camera-probe"
-Issues = "https://github.com/drykov/camera-probe/issues"
+Homepage = "https://github.com/drycov/camera-probe"
+Repository = "https://github.com/drycov/camera-probe"
+Issues = "https://github.com/drycov/camera-probe/issues"
 
 # ============================================================
 # setuptools configuration (SRC layout)
