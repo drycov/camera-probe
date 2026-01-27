@@ -14,16 +14,21 @@ logger = logging.getLogger(__name__)
 @ClientRegistry.register
 class DahuaCgiClient:
     """
-    Dahua CGI client.
+    Dahua CGI client (transport-only).
 
-    Transport-only:
-    - HTTP only
-    - returns RAW responses (str)
-    - no parsing
-    - no domain models
+    Responsibilities:
+    - HTTP transport
+    - auth handling
+    - RAW CGI responses
     """
 
     vendor: ClassVar[str] = "dahua"
+
+    _BASE_TEST_PATHS = (
+        "/cgi-bin/magicBox.cgi?action=getSystemInfo",
+        "/cgi-bin/main-cgi?action=getDeviceInfo",
+        "/cgi-bin/global.cgi?action=getCurrentTime",
+    )
 
     def __init__(
         self,
@@ -36,6 +41,7 @@ class DahuaCgiClient:
         verify_ssl: bool = False,
     ) -> None:
         self.ip = ip
+        self._base_url: Optional[str] = None
 
         self.http = HttpClient(
             ip=ip,
@@ -46,7 +52,7 @@ class DahuaCgiClient:
         )
         self.http.set_auth(username, password)
 
-        logger.debug("dahua client init | ip=%s", ip)
+        logger.debug("dahua client initialized | ip=%s", ip)
 
     # ─────────────────────────────────────
     # Lifecycle
@@ -56,17 +62,43 @@ class DahuaCgiClient:
         self.http.close()
 
     # ─────────────────────────────────────
-    # Base URL
+    # Internal helpers
     # ─────────────────────────────────────
 
-    async def _ensure_base_url(self) -> Optional[str]:
-        return await self.http.get_base_url(
-            test_paths=(
-                "/cgi-bin/magicBox.cgi?action=getSystemInfo",
-                "/cgi-bin/main-cgi?action=getDeviceInfo",
-                "/cgi-bin/global.cgi?action=getCurrentTime",
-            ),
+    async def _get_base_url(self) -> Optional[str]:
+        """
+        Resolve and cache base URL once per client lifecycle.
+        """
+        if self._base_url:
+            return self._base_url
+
+        base = await self.http.get_base_url(
+            test_paths=self._BASE_TEST_PATHS,
             ok_statuses=(200, 401, 403),
+        )
+
+        if not base:
+            logger.debug("dahua base url not resolved | ip=%s", self.ip)
+            return None
+
+        self._base_url = base
+        logger.debug("dahua base url resolved | ip=%s base=%s", self.ip, base)
+        return base
+
+    async def _get(
+        self,
+        path: str,
+        *,
+        force_basic: bool = False,
+    ) -> Optional[str]:
+        base = await self._get_base_url()
+        if not base:
+            return None
+
+        return await self.http.get(
+            path,
+            base_url=base,
+            force_basic=force_basic,
         )
 
     # ─────────────────────────────────────
@@ -75,41 +107,27 @@ class DahuaCgiClient:
 
     async def get_device_info(self) -> Optional[str]:
         """
-        Returns RAW device info (CGI text).
+        RAW device info (CGI text).
         """
-        base = await self._ensure_base_url()
-        raw = await self.http.get(
+        raw = await self._get(
             "/cgi-bin/magicBox.cgi?action=getSystemInfo",
-            base_url=base,
         )
-        
-        logger.error(raw)
 
-        if not raw:
-            raw = await self.http.get(
-                "/cgi-bin/main-cgi?action=getDeviceInfo",
-                base_url=base,
-                force_basic=True,
-            )
+        if raw:
+            return raw
 
-        return raw
+        return await self._get(
+            "/cgi-bin/main-cgi?action=getDeviceInfo",
+            force_basic=True,
+        )
 
     async def get_software_version(self) -> Optional[str]:
         """
-        Returns RAW software version (CGI text).
+        RAW software version (CGI text).
         """
-        base = await self._ensure_base_url()
-        if not base:
-            return None
-        
-        raw = await self.http.get(
+        return await self._get(
             "/cgi-bin/magicBox.cgi?action=getSoftwareVersion",
-            base_url=base,
         )
-        
-        logger.error(raw)
-
-        return raw
 
     # ─────────────────────────────────────
     # Public API (NETWORK)
@@ -117,18 +135,9 @@ class DahuaCgiClient:
 
     async def get_network_info(self) -> Optional[str]:
         """
-        Returns RAW network config (CGI text).
+        RAW network config (CGI text).
         """
-        base = await self._ensure_base_url()
-        if not base:
-            return None
-
-        raw = await self.http.get(
+        return await self._get(
             "/cgi-bin/configManager.cgi?action=getConfig&name=Network",
-            base_url=base,
             force_basic=True,
         )
-
-        logger.error(raw)
-
-        return raw

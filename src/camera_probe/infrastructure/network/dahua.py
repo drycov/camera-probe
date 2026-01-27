@@ -25,7 +25,6 @@ class DahuaNetworkExtractor:
             k, v = line.split("=", 1)
             data[k.strip()] = v.strip()
 
-        iface = "eth0"
 
         ip = data.get("table.Network.eth0.IPAddress")
         mask = data.get("table.Network.eth0.SubnetMask")
@@ -40,7 +39,6 @@ class DahuaNetworkExtractor:
         subnet = subnet_address_cidr(ip,cidr)
         
         return NetworkInfo(
-            interface=iface,
             ip=ip,
             mask=mask,
             cidr=cidr,

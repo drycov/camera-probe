@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import logging
@@ -25,6 +24,7 @@ class HikvisionIsapiClient:
         verify_ssl: bool = False,
     ) -> None:
         self.ip = ip
+        self._base_url: Optional[str] = None
 
         self.http = HttpClient(
             ip=ip,
@@ -45,14 +45,17 @@ class HikvisionIsapiClient:
     # ─────────────────────────────────────────────
 
     async def _ensure_base_url(self) -> Optional[str]:
-        return await self.http.get_base_url(
-            test_paths=(
-                "/ISAPI/System/deviceInfo",
-                "/ISAPI/System/time",
-                "/ISAPI/System/capabilities",
-            ),
-            ok_statuses=(200, 401, 403),
-        )
+        if self._base_url is None:
+
+            self._base_url = await self.http.get_base_url(
+                test_paths=(
+                    "/ISAPI/System/deviceInfo",
+                    "/ISAPI/System/time",
+                    "/ISAPI/System/capabilities",
+                ),
+                ok_statuses=(200, 401, 403),
+            )
+            return self._base_url
 
     # ─────────────────────────────────────────────
     # Raw fetchers (NO parsing)
@@ -69,15 +72,13 @@ class HikvisionIsapiClient:
         )
 
     async def get_network_info_raw(self) -> Optional[str]:
-        base = await self._ensure_base_url()
+        base = self._base_url
         if not base:
             return None
 
         for path in (
             "/ISAPI/System/Network/interfaces",
-            "/ISAPI/System/Network/Interfaces",
-            "/ISAPI/System/Network/Interfaces/1",
-            "/ISAPI/Network/interfaces",
+            "/ISAPI/System/Network/interfaces/1",
         ):
             raw = await self.http.get(path, base_url=base, force_basic=True)
             if raw:

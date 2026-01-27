@@ -7,8 +7,6 @@ from typing import Optional
 
 @dataclass(slots=True)
 class NetworkInfo:
-    interface: Optional[str]
-
     ip: Optional[str]
     mask: Optional[str]
     cidr: Optional[int]

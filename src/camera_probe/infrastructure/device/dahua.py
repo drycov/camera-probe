@@ -77,5 +77,5 @@ class DahuaDeviceExtractor:
             "serial": serial,
             "mac": mac.upper() if mac else None,
             "firmware": firmware,
-            "manufacturer": "Dahua",
+            "manufacturer": "Dahua"
         }

@@ -1,4 +1,5 @@
 # camera_probe/application/services/probe_service.py
+
 from __future__ import annotations
 
 from typing import Optional
@@ -10,16 +11,19 @@ from camera_probe.domain.models.detect_result import DetectResult
 from camera_probe.domain.models.probe_result import ProbeResult
 from camera_probe.domain.ports.adapter_factory import AdapterFactory
 from camera_probe.domain.ports.discovery import DiscoveryPort
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ProbeService:
     """
     Application-level use case for probing IP cameras.
 
-    IMPORTANT:
-    - no infrastructure imports
-    - no logging
-    - no vendor knowledge
+    Responsibilities:
+    - orchestrate probe flow
+    - select strategy
+    - return deterministic ProbeResult
     """
 
     def __init__(
@@ -38,52 +42,46 @@ class ProbeService:
     # ────────────────────────────────────────────────
 
     async def probe(self, request: ProbeRequest) -> ProbeResult:
-        """
-        Execute probe use case.
-
-        Always returns ProbeResult (never None).
-        """
-
         self._validate_request(request)
 
-        has_creds = bool(request.username or request.password)
-
-        # 1. Forced probe always wins
-        if request.force and has_creds:
+        # 1. Forced strategy (explicit)
+        if self._should_force_first(request):
             return await self._force_probe(request)
 
-        # 2. Discovery phase
-        detect = await self._run_discovery(request)
+        # 2. Discovery
+        detect = await self._discover(request)
 
-        # 3. Vendor-specific probe
-        if self._can_use_vendor_probe(detect):
-            result = await self._run_vendor_probe(detect, request)
-            if result and is_probe_success(result.confidence, self._min_confidence):
-                return result
+        # 3. Vendor strategy
+        result = await self._try_vendor_probe(detect, request)
+        if result:
+            return result
 
-        # 4. Fallback to force probe
-        if request.prefer_force and has_creds:
+        # 4. Forced strategy (fallback)
+        if self._should_force_fallback(request):
             return await self._force_probe(request)
 
         # 5. Hard failure
-        return self._minimal_failure(request.ip, detect)
+        return self._failure_result(request.ip, detect)
 
     # ────────────────────────────────────────────────
-    # Internal steps
+    # Phases
     # ────────────────────────────────────────────────
 
-    async def _run_discovery(self, request: ProbeRequest) -> DetectResult:
+    async def _discover(self, request: ProbeRequest) -> DetectResult:
         return await self._discovery.detect(
             ip=request.ip,
             username=request.username,
             password=request.password,
         )
 
-    async def _run_vendor_probe(
+    async def _try_vendor_probe(
         self,
         detect: DetectResult,
         request: ProbeRequest,
     ) -> Optional[ProbeResult]:
+        if not self._can_vendor_probe(detect):
+            return None
+
         try:
             adapter = self._adapters.create(
                 vendor=detect.vendor,
@@ -92,10 +90,36 @@ class ProbeService:
                 password=request.password,
                 timeout=request.timeout,
             )
-            return await adapter.probe()
-        except Exception:
+            result = await adapter.probe()
+        except Exception as exc:
+            logger.warning(
+                "vendor probe failed with exception | ip=%s vendor=%s error=%s",
+                request.ip,
+                detect.vendor,
+                exc.__class__.__name__,
+            )
+            logger.debug("vendor probe exception details", exc_info=True)
             return None
 
+        if not result:
+            logger.info(
+                "vendor probe returned no result | ip=%s vendor=%s",
+                request.ip,
+                detect.vendor,
+            )
+            return None
+
+        if not is_probe_success(result.confidence, self._min_confidence):
+            logger.info(
+                "vendor probe confidence too low | ip=%s vendor=%s confidence=%.2f min=%.2f",
+                request.ip,
+                detect.vendor,
+                result.confidence,
+                self._min_confidence,
+            )
+            return None
+
+        return result
 
     async def _force_probe(self, request: ProbeRequest) -> ProbeResult:
         adapter = self._adapters.create(
@@ -108,16 +132,29 @@ class ProbeService:
         return await adapter.probe()
 
     # ────────────────────────────────────────────────
-    # Decision helpers
+    # Decisions
     # ────────────────────────────────────────────────
 
-    def _can_use_vendor_probe(self, detect: DetectResult) -> bool:
+    def _should_force_first(self, request: ProbeRequest) -> bool:
+        return bool(request.force and self._has_credentials(request))
+
+    def _should_force_fallback(self, request: ProbeRequest) -> bool:
+        return bool(request.prefer_force and self._has_credentials(request))
+
+    def _can_vendor_probe(self, detect: DetectResult) -> bool:
         return bool(
-            detect.vendor
-            and is_probe_success(detect.confidence, self._min_confidence)
+            detect.vendor and is_probe_success(detect.confidence, self._min_confidence)
         )
 
-    def _minimal_failure(self, ip: str, detect: DetectResult) -> ProbeResult:
+    @staticmethod
+    def _has_credentials(request: ProbeRequest) -> bool:
+        return bool(request.username or request.password)
+
+    # ────────────────────────────────────────────────
+    # Results
+    # ────────────────────────────────────────────────
+
+    def _failure_result(self, ip: str, detect: DetectResult) -> ProbeResult:
         return ProbeResult(
             ip=ip,
             vendor=None,

@@ -177,7 +177,6 @@ def scan(
 # Human-readable output
 # ────────────────────────────────────────────────
 
-
 def _print_human(result) -> None:
     typer.echo(f"IP:         {result.ip}")
     typer.echo(f"Vendor:     {result.vendor or '-'}")
@@ -191,7 +190,6 @@ def _print_human(result) -> None:
         typer.echo(f"MAC:        {result.mac}")
     if result.firmware:
         typer.echo(f"Firmware:   {result.firmware}")
-
 
     if result.network:
         typer.echo("Network:")
