@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from ipaddress import ip_network
 import json
-from typing import Optional
+from ipaddress import ip_network
+from typing import Optional, List
 
 import typer
 from rich.progress import (
@@ -14,17 +14,21 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
-import logging
-from camera_probe.application.dto.probe_request import ProbeRequest
-from camera_probe.application.schema.probe_result import probe_result_schema
+
+from camera_probe.api import probe as probe_api
+from camera_probe.api import scan as scan_api  # ⬅️ публичный scan
 from camera_probe.application.serializers.probe_result import probe_result_to_dict
-from camera_probe.bootstrap.probe import build_probe_service
-from camera_probe.application.dto.scan_request import ScanRequest
-from camera_probe.bootstrap import build_scan_service
+from camera_probe.domain.models.probe_result import ProbeResult
 
-logger = logging.getLogger(__name__)
+app = typer.Typer()
 
 
+# ────────────────────────────────────────────────
+# Probe command (PUBLIC API)
+# ────────────────────────────────────────────────
+
+
+@app.command()
 def probe(
     ip: str = typer.Option(..., "--ip", help="IP address of the camera"),
     username: Optional[str] = typer.Option(None, "--user", help="Username"),
@@ -41,44 +45,30 @@ def probe(
         "--json",
         help="Output result as JSON",
     ),
-    # json_schema: bool = typer.Option(
-    #     False,
-    #     "--json-schema",
-    #     help="Print JSON Schema for ProbeResult and exit",
-    # ),
 ) -> None:
     """
     Probe a single IP camera.
     """
 
-    # ────────────────────────────────────────────────
-    # Build request DTO
-    # ────────────────────────────────────────────────
-
-    request = ProbeRequest(
-        ip=ip,
-        username=username,
-        password=password,
-        timeout=timeout,
-        force=force,
-        prefer_force=prefer_force,
-    )
-
-    service = build_probe_service()
-
-    # ────────────────────────────────────────────────
-    # Execute use case
-    # ────────────────────────────────────────────────
-
     try:
-        result = asyncio.run(service.probe(request))
+        result: ProbeResult = asyncio.run(
+            probe_api(
+                ip=ip,
+                username=username,
+                password=password,
+                timeout=timeout,
+                force=force,
+                prefer_force=prefer_force,
+            )
+        )
+
     except KeyboardInterrupt:
         typer.echo("Interrupted", err=True)
         raise typer.Exit(code=130)
 
-    # ────────────────────────────────────────────────
-    # Output
-    # ────────────────────────────────────────────────
+    except Exception as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
 
     if json_output:
         typer.echo(
@@ -93,16 +83,12 @@ def probe(
     _print_human(result)
 
 
-def schema() -> None:
-    typer.echo(
-        json.dumps(
-            probe_result_schema(),
-            indent=2,
-            ensure_ascii=False,
-        )
-    )
+# ────────────────────────────────────────────────
+# Scan command (PUBLIC API)
+# ────────────────────────────────────────────────
 
 
+@app.command()
 def scan(
     cidr: str = typer.Argument(..., help="CIDR to scan (e.g. 10.0.0.0/24)"),
     username: Optional[str] = typer.Option(None, "--user"),
@@ -117,17 +103,7 @@ def scan(
 
     hosts = list(ip_network(cidr, strict=False).hosts())
     total = len(hosts)
-
-    request = ScanRequest(
-        cidr=cidr,
-        username=username,
-        password=password,
-        timeout=timeout,
-        concurrency=concurrency,
-    )
-
-    service = build_scan_service()
-    results = []
+    results: List[ProbeResult] = []
 
     progress = Progress(
         SpinnerColumn(),
@@ -138,20 +114,19 @@ def scan(
         TimeRemainingColumn(),
     )
 
-    # 🔑 безопасный контейнер для task_id
-    task_id_holder: dict[str, int] = {}
-
-    def on_result(result):
-        results.append(result)
-        progress.advance(task_id_holder["task_id"])
-
     async def _run():
         with progress:
-            task_id_holder["task_id"] = progress.add_task(
-                "Scanning",
-                total=total,
-            )
-            await service.scan(request, on_result=on_result)
+            task_id = progress.add_task("Scanning", total=total)
+
+            async for result in scan_api(
+                cidr=cidr,
+                username=username,
+                password=password,
+                timeout=timeout,
+                concurrency=concurrency,
+            ):
+                results.append(result)
+                progress.advance(task_id)
 
     try:
         asyncio.run(_run())
@@ -177,10 +152,11 @@ def scan(
 # Human-readable output
 # ────────────────────────────────────────────────
 
-def _print_human(result) -> None:
+
+def _print_human(result: ProbeResult) -> None:
     typer.echo(f"IP:         {result.ip}")
     typer.echo(f"Vendor:     {result.vendor or '-'}")
-    # typer.echo(f"Confidence: {result.confidence:.2f}")
+
     if result.model:
         typer.echo(f"Model:      {result.model}")
     if result.serial:
@@ -199,7 +175,7 @@ def _print_human(result) -> None:
         if result.network.mask:
             typer.echo(f"  Netmask:  {result.network.mask}")
         if result.network.subnet:
-            typer.echo(f"  Subnet:  {result.network.subnet}")
+            typer.echo(f"  Subnet:   {result.network.subnet}")
 
     if result.ntp:
         typer.echo("NTP:")

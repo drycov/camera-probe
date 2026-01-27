@@ -1,38 +1,39 @@
-# camera-probe
+---
 
-Асинхронная библиотека и CLI-утилита для автоматической идентификации IP-камер (Hikvision, Dahua, Axis и др.), получения сетевых параметров и сервисной информации (NTP и пр.).
+# 📷 camera-probe
 
-Проект ориентирован на **production‑использование**: инвентаризация, мониторинг, CMDB, SOC / NOC инструменты.
+**camera-probe** — это асинхронная Python-библиотека и CLI-утилита для
+**обнаружения, идентификации и диагностики IP-камер** (CCTV, NVR, PTZ).
+
+Проект спроектирован по принципам **Clean Architecture** и подходит как для:
+
+* автоматизированного inventory,
+* мониторинга камер,
+* интеграции в ERP / NMS / SOC,
+* массового сканирования сетей.
 
 ---
 
-## Возможности
+## ✨ Возможности
 
-* 🔍 Автоопределение вендора (passive + active)
-* 🔐 Аутентифицированный probe (Digest / Basic / Anonymous fallback)
-* 🌐 Получение сетевых параметров (IP, mask, gateway, MAC)
-* ⏱ Получение NTP конфигурации
-* ⚡ Асинхронная архитектура (asyncio)
-* 🧩 Расширяемая adapter‑архитектура
-* 🛠 Использование как CLI и как библиотеки
-
-Поддерживаемые вендоры:
-
-* Hikvision (ISAPI)
-* Dahua (CGI)
-* Axis (VAPIX, базово)
+* 🔍 **Автоопределение вендора** (Hikvision, Dahua, Axis, …)
+* 📡 **RTSP / HTTP / ISAPI / CGI probing**
+* 🌐 Получение **сетевой конфигурации** (IP, mask, gateway, MAC)
+* ⏱️ Проверка **NTP**
+* 📊 **Confidence score** (насколько уверенно определена камера)
+* ⚡ Асинхронное **сканирование CIDR**
+* 🧩 Расширяемая архитектура (adapters / extractors / fingerprints)
+* 🧱 Один код для **CLI и библиотеки**
 
 ---
 
-## Установка
-
-### Через pip
+## 📦 Установка
 
 ```bash
 pip install camera-probe
 ```
 
-### Из исходников
+Или из исходников:
 
 ```bash
 git clone https://github.com/your-org/camera-probe.git
@@ -42,233 +43,217 @@ pip install -e .
 
 ---
 
-## Использование как CLI
+## 🚀 Быстрый старт (как библиотека)
 
-### Простой запуск
-
-```bash
-camera-probe --ip 10.230.48.82 --user admin --password password
-```
-
-### Подробный вывод
-
-```bash
-camera-probe --ip 10.230.48.82 --user admin --password password --verbose
-```
-
-### Принудительный probe (без autodetect)
-
-```bash
-camera-probe --ip 10.230.48.82 --user admin --password password --force
-```
-
-Код возврата:
-
-* `0` — успех
-* `1` — ошибка идентификации
-* `130` — прервано пользователем
-
----
-
-## Использование как библиотеки
-
-### Быстрый старт (async API)
+### Probe одного IP
 
 ```python
 import asyncio
-from camera_probe.probe import probe_camera_async
+from camera_probe import probe
+
 
 async def main():
-    result = await probe_camera_async(
-        ip="10.230.48.82",
+    result = await probe(
+        ip="192.168.1.64",
         username="admin",
-        password="password",
+        password="12345",
     )
 
-    if result.success:
-        print("Vendor:", result.vendor)
-        print("Model:", result.model)
-        print("Serial:", result.serial)
-        print("MAC:", result.mac)
+    print("IP:", result.ip)
+    print("Vendor:", result.vendor)
+    print("Model:", result.model)
+    print("Confidence:", result.confidence)
 
-        if result.network:
-            print("IP:", result.network.ip)
-            print("Gateway:", result.network.gateway)
 
-        if result.ntp:
-            print("NTP server:", result.ntp.server)
-    else:
-        print("Probe failed:", result.error)
-
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ---
 
-## Модель результата (`ProbeResult`)
+### Scan CIDR (асинхронно)
 
 ```python
-@dataclass
-class ProbeResult:
-    ip: str
-    vendor: Optional[str]
-    confidence: float
+import asyncio
+from camera_probe import scan
 
-    model: Optional[str]
-    serial: Optional[str]
-    mac: Optional[str]
-    firmware: Optional[str]
 
-    network: Optional[NetworkInfo]
-    ntp: Optional[NtpInfo]
+async def main():
+    async for result in scan(
+        cidr="10.165.64.0/24",
+        username="admin",
+        password="12345",
+        concurrency=20,
+    ):
+        print(
+            f"{result.ip:15} "
+            f"{result.vendor or '-':10} "
+            f"{result.confidence:.2f}"
+        )
 
-    raw: Dict[str, Any]
-    error: Optional[str]
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-### Проверка успеха
+---
+
+## 🧩 Публичный API
+
+Поддерживаются **только** следующие импорты:
 
 ```python
-if result.success:
+from camera_probe import (
+    probe,
+    scan,
+    ProbeResult,
+    NetworkInfo,
+    NtpInfo,
+)
+```
+
+### `probe(...) → ProbeResult`
+
+```python
+await probe(
+    ip: str,
+    username: str | None = None,
+    password: str | None = None,
+    timeout: float = 5.0,
+    force: bool = False,
+    prefer_force: bool = False,
+)
+```
+
+### `scan(...) → AsyncIterator[ProbeResult]`
+
+```python
+async for result in scan(
+    cidr: str,
+    username: str | None = None,
+    password: str | None = None,
+    timeout: float = 5.0,
+    concurrency: int = 20,
+):
     ...
 ```
 
-> Успех определяется `confidence >= 0.7`, а не наличием одного поля.
+❗ **Всё остальное (`application/*`, `infrastructure/*`) — не является публичным API**
+и может меняться без предупреждения.
 
 ---
 
-## NetworkInfo
+## 🖥️ Использование CLI
 
-```python
-@dataclass
-class NetworkInfo:
-    ip: Optional[str]
-    mask: Optional[str]
-    cidr: Optional[int]
-    gateway: Optional[str]
-    mac: Optional[str]
-    gateway_in_subnet: Optional[bool]
+### Probe камеры
+
+```bash
+camera-probe probe --ip 192.168.1.64 --user admin --password 12345
 ```
 
-Используется для:
+### JSON-вывод
 
-* CMDB / inventory
-* сетевой валидации
-* поиска конфликтов IP
-
----
-
-## NtpInfo
-
-```python
-@dataclass
-class NtpInfo:
-    enabled: Optional[bool]
-    server: Optional[str]
-    timezone: Optional[str]
-    update_period: Optional[str]
-    port: Optional[int]
-    interval: Optional[int]
+```bash
+camera-probe probe --ip 192.168.1.64 --json
 ```
 
-Поля могут быть `None` — модель мультивендорная.
+### Scan сети
 
----
-
-## Управление стратегией probe
-
-### Smart probe (рекомендуется)
-
-```python
-from camera_probe.orchestrators.smart_probe import SmartProbeOrchestrator
-from camera_probe.discovery.config import DiscoveryConfig
-
-orchestrator = SmartProbeOrchestrator(
-    config=DiscoveryConfig(
-        enable_rtsp_passive=True,
-    )
-)
-
-result = await orchestrator.probe(
-    ip="10.230.48.82",
-    username="admin",
-    password="password",
-)
-```
-
-### Force probe
-
-```python
-from camera_probe.orchestrators.force_probe import ForceProbeOrchestrator
-
-orchestrator = ForceProbeOrchestrator()
-
-result = await orchestrator.probe(
-    ip="10.230.48.82",
-    username="admin",
-    password="password",
-)
+```bash
+camera-probe scan 10.165.64.0/24 --user admin --password 12345
 ```
 
 ---
 
-## Использование адаптеров напрямую (advanced)
+## 📄 Пример вывода (human)
 
-```python
-from camera_probe.adapters.hikvision.adapter import HikvisionAdapter
-
-adapter = HikvisionAdapter(
-    ip="10.230.48.82",
-    username="admin",
-    password="password",
-)
-
-result = await adapter.probe_async()
+```
+IP:         10.165.64.10
+Vendor:     Dahua
+Model:      DH-SD49225T-HN-150IR
+Serial:     4L067E8PAJ435EC
+MAC:        9C:14:63:49:86:8E
+Firmware:   2.800.0000000.7.R
+Network:
+  IP:       10.165.64.10
+  Gateway:  10.165.64.9
+  Netmask:  255.255.255.248
 ```
 
-Подходит для:
+---
 
-* unit / integration тестов
-* vendor‑specific диагностики
-* отладки ISAPI / CGI
+## 🧠 Архитектура
+
+Проект построен по **Clean Architecture**:
+
+```
+CLI / Public API
+        ↓
+Application (Use Cases)
+        ↓
+Domain (Models, Ports)
+        ↓
+Infrastructure (Adapters, Clients)
+```
+
+### Ключевые принципы
+
+* CLI и библиотека используют **один и тот же API**
+* Вендор-специфика изолирована
+* Domain ничего не знает про HTTP / RTSP
+* Лёгкое добавление новых камер и протоколов
 
 ---
 
-## Архитектура
+## 🧪 Надёжность и ошибки
 
-* `adapters/` — vendor‑specific логика
-* `clients/` — HTTP / ISAPI / CGI клиенты
-* `discovery/` — passive detection
-* `orchestrators/` — стратегии probe
-* `models/` — каноничные dataclass‑модели
+Возможные исключения:
 
-Принципы:
+* `TimeoutError` — камера не ответила
+* `ConnectionError` — сетевая ошибка
+* `ValueError` — некорректные параметры
+* `RuntimeError` — внутренняя ошибка (bug)
 
-* async‑first
-* без глобального состояния
-* безопасно для worker‑ов
+Рекомендуется оборачивать вызовы в `try/except`.
 
 ---
 
-## Production‑рекомендации
+## 📌 Версионирование
 
-* Используйте `SmartProbeOrchestrator`
-* Ограничивайте concurrency
-* Кэшируйте `ProbeResult` (TTL 1–5 мин)
-* Не вызывайте probe в request‑path API
+Используется **Semantic Versioning (SemVer)**:
 
----
+* `MAJOR` — breaking changes в public API
+* `MINOR` — новые возможности
+* `PATCH` — исправления
 
-## Roadmap
+Текущая версия доступна как:
 
-* ONVIF network / NTP fallback
-* Batch‑scan (CIDR, inventory)
-* JSON‑schema для `ProbeResult`
-* Prometheus / CMDB export
-* Streaming probe API
+```python
+from camera_probe import __version__
+```
 
 ---
 
-## Лицензия
+## 🛣️ Roadmap
 
-MIT / Internal (уточняется)
+* [ ] `probe_sync()` / `scan_sync()`
+* [ ] Расширение fingerprint’ов
+* [ ] Экспорт в Prometheus / JSON Schema
+* [ ] Axis / ONVIF deep-support
+* [ ] Metrics & health-checks
+
+---
+
+## 🤝 Вклад
+
+Pull requests приветствуются.
+Перед крупными изменениями — открой issue для обсуждения.
+
+---
+
+## 📜 Лицензия
+
+MIT License © Denis Rykov
+
+---
+

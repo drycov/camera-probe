@@ -5,7 +5,7 @@ import typer
 
 from camera_probe.infrastructure.logging.logging import setup_logging,TRACE_LEVEL
 
-from camera_probe.interface.cli.commands import probe, schema, scan
+from camera_probe.interface.cli.commands import probe, scan
 
 
 _app = typer.Typer(
@@ -44,7 +44,6 @@ def main(
 # Explicit command registration
 _app.command("probe")(probe)
 _app.command("scan")(scan)
-_app.command("schema")(schema)
 
 
 def main() -> None:

@@ -14,7 +14,7 @@ description = "Async toolkit for probing IP cameras (Hikvision, Dahua, Axis)"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-version = "0.3.0"
+version = "1.0.0"
 
 keywords = [
     "ip-camera",

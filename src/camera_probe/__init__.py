@@ -1,15 +1,34 @@
-from camera_probe.bootstrap.probe import build_probe_service
-from camera_probe.bootstrap.scan import build_scan_service
-from camera_probe.domain.models.detect_result import DetectResult
+from __future__ import annotations
+
+# ────────────────────────────────────────────────
+# Public API functions
+# ────────────────────────────────────────────────
+
+from camera_probe.api import probe, scan
+
+# ────────────────────────────────────────────────
+# Domain models (stable contracts)
+# ────────────────────────────────────────────────
+
 from camera_probe.domain.models.probe_result import ProbeResult
 from camera_probe.domain.models.network_info import NetworkInfo
 from camera_probe.domain.models.ntp_info import NtpInfo
 
-__ALL__ = [
-    "DetectResult",
+# ────────────────────────────────────────────────
+# Version
+# ────────────────────────────────────────────────
+
+from camera_probe.version import __version__
+
+# ────────────────────────────────────────────────
+# Public exports
+# ────────────────────────────────────────────────
+
+__all__ = [
+    "probe",
+    "scan",
     "ProbeResult",
     "NetworkInfo",
     "NtpInfo",
-    "build_probe_service",
-    "build_scan_service",
+    "__version__",
 ]
