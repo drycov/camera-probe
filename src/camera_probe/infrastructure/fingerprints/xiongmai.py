@@ -1,17 +1,18 @@
 # xiongmai.py
 from camera_probe.infrastructure.fingerprints.base import Fingerprint
+from camera_probe.infrastructure.fingerprints.utils import EvidenceView
 
 
 class XiongmaiFingerprint(Fingerprint):
     def match(self, evidence: dict) -> bool:
-        if "xiongmai" in (evidence.get("rtsp_vendor_markers") or []):
+        view = EvidenceView(evidence)
+        if view.has_marker("rtsp_vendor_markers", "xiongmai"):
             return True
 
-        realm = (evidence.get("realm") or "").lower()
-        if "xmeye" in realm:
+        if "xmeye" in view.text("realm"):
             return True
 
-        model = (evidence.get("onvif_model") or "").lower()
+        model = view.text("onvif_model")
         return any(x in model for x in ("xm", "xmeye"))
 
     def vendor(self) -> str:

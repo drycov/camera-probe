@@ -1,22 +1,21 @@
 # axis.py
 from camera_probe.infrastructure.fingerprints.base import Fingerprint
+from camera_probe.infrastructure.fingerprints.utils import EvidenceView
 
 
 class AxisFingerprint(Fingerprint):
     def match(self, evidence: dict) -> bool:
-        if "axis" in (evidence.get("rtsp_vendor_markers") or []):
+        view = EvidenceView(evidence)
+        if view.has_marker("rtsp_vendor_markers", "axis"):
             return True
 
-        server = (evidence.get("rtsp_server") or "").lower()
-        if "axis" in server:
+        if "axis" in view.text("rtsp_server"):
             return True
 
-        m = (evidence.get("onvif_manufacturer") or "").lower()
-        if "axis" in m:
+        if "axis" in view.text("onvif_manufacturer"):
             return True
 
-        model = (evidence.get("onvif_model") or "").lower()
-        return model.startswith(("p", "q", "m"))
+        return view.text_startswith("onvif_model", ("p", "q", "m"))
 
     def vendor(self) -> str:
         return "Axis"

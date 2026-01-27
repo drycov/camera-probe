@@ -1,18 +1,19 @@
 # uniview.py
 from camera_probe.infrastructure.fingerprints.base import Fingerprint
+from camera_probe.infrastructure.fingerprints.utils import EvidenceView
 
 
 class UniviewFingerprint(Fingerprint):
     def match(self, evidence: dict) -> bool:
-        if "uniview" in (evidence.get("rtsp_vendor_markers") or []):
+        view = EvidenceView(evidence)
+        if view.has_marker("rtsp_vendor_markers", "uniview"):
             return True
 
-        m = (evidence.get("onvif_manufacturer") or "").lower()
-        if "uniview" in m or "unv" in m:
+        manufacturer = view.text("onvif_manufacturer")
+        if "uniview" in manufacturer or "unv" in manufacturer:
             return True
 
-        model = (evidence.get("onvif_model") or "").lower()
-        return model.startswith("ipc")
+        return view.text_startswith("onvif_model", "ipc")
 
     def vendor(self) -> str:
         return "Uniview"
