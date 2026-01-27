@@ -78,7 +78,9 @@ class HikvisionIsapiClient:
 
         for path in (
             "/ISAPI/System/Network/interfaces",
-            "/ISAPI/System/Network/interfaces/1",
+            "/ISAPI/System/Network/Interfaces",
+            "/ISAPI/System/Network/Interfaces/1",
+            "/ISAPI/Network/interfaces",
         ):
             raw = await self.http.get(path, base_url=base, force_basic=True)
             if raw:

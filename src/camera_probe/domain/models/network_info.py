@@ -15,4 +15,4 @@ class NetworkInfo:
     mac: Optional[str]
 
     gateway_in_subnet: Optional[bool] = None
-    subnet: Optional[bool] = None
+    subnet: Optional[str] = None

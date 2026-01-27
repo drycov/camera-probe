@@ -66,7 +66,7 @@ class HikvisionAdapter(BaseCameraAdapter):
                 fallback_cls=GenericNetworkExtractor,
             )
             network = network_extractor.extract(network_raw)
-
+                
         # ──────────────────────────────────────────────
         # Assemble ProbeResult
         # ──────────────────────────────────────────────

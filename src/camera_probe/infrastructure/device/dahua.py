@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import Optional, Dict
 
-from camera_probe.domain.ports.device_extractor import DeviceExtractor
 from camera_probe.domain.models.network_info import NetworkInfo
 from camera_probe.domain.models.ntp_info import NtpInfo
 from camera_probe.infrastructure.device.decorators import register_device_extractor

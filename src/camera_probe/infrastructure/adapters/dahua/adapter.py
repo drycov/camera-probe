@@ -10,7 +10,6 @@ from camera_probe.domain.models.probe_result import ProbeResult
 from camera_probe.infrastructure.adapters.base import BaseCameraAdapter
 from camera_probe.infrastructure.adapters.decorators import register_adapter
 
-from camera_probe.infrastructure.device.generic import GenericDeviceExtractor
 from camera_probe.infrastructure.device.registry import DeviceExtractorRegistry
 from camera_probe.infrastructure.extractor.factory import ExtractorFactory
 from camera_probe.infrastructure.extractor.null import NullDeviceExtractor

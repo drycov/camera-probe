@@ -1,21 +1,32 @@
-# camera_probe/infrastructure/network/hikvision.py
-
 from __future__ import annotations
 
 import ipaddress
+import logging
 from typing import Optional
 
 from camera_probe.domain.models.network_info import NetworkInfo
 from camera_probe.infrastructure.network.decorators import register_network_extractor
-from camera_probe.infrastructure.xml.parser import extract_default_ns, parse_xml
-import logging
+from camera_probe.infrastructure.network.utils import subnet_address_cidr
+from camera_probe.infrastructure.xml.parser import parse_xml, extract_default_ns
+
 logger = logging.getLogger(__name__)
+
 
 @register_network_extractor("hikvision")
 class HikvisionNetworkExtractor:
+    """
+    Extract network information from Hikvision ISAPI XML.
+
+    Correctly handles:
+    - multiple NetworkInterface entries
+    - deterministic interface selection
+    """
+
     def extract(self, raw: str) -> Optional[NetworkInfo]:
         if not raw:
             return None
+
+        logger.trace("hikvision network raw:\n%s", raw)
 
         root = parse_xml(raw)
         if root is None:
@@ -23,30 +34,71 @@ class HikvisionNetworkExtractor:
 
         NS = extract_default_ns(root)
 
-        # root может быть сразу <NetworkInterface>
-        if root.tag.endswith("NetworkInterface"):
-            iface = root
-        else:
-            iface = root.find(".//ns:NetworkInterface", NS)
+        interfaces: list[dict] = []
 
-        if iface is None:
+        # ──────────────────────────────────────────────
+        # Collect all interfaces
+        # ──────────────────────────────────────────────
+        for iface in root.findall(".//ns:NetworkInterface", NS):
+            ip_node = iface.find(".//ns:IPAddress", NS)
+            if ip_node is None:
+                continue
+
+            ip = ip_node.findtext("ns:ipAddress", default=None, namespaces=NS)
+            mask = ip_node.findtext("ns:subnetMask", default=None, namespaces=NS)
+
+            gateway = ip_node.findtext(
+                "ns:DefaultGateway/ns:ipAddress",
+                default=None,
+                namespaces=NS,
+            )
+
+            mac = iface.findtext(".//ns:MACAddress", default=None, namespaces=NS)
+            mac_norm = mac.strip().upper().replace("-", ":") if mac else None
+
+            interfaces.append(
+                {
+                    "ip": ip,
+                    "mask": mask,
+                    "gateway": gateway,
+                    "mac": mac_norm,
+                }
+            )
+
+        if not interfaces:
             return None
 
-        ip_node = iface.find(".//ns:IPAddress", NS)
-        if ip_node is None:
-            return None
+        # ──────────────────────────────────────────────
+        # Select best interface
+        # Strategy:
+        #   1. interface with default gateway
+        #   2. fallback to first interface
+        # ──────────────────────────────────────────────
+        selected = None
+        for iface in interfaces:
+            gw = iface.get("gateway")
+            if gw and gw != "0.0.0.0":
+                selected = iface
+                break
 
-        ip = ip_node.findtext("ns:ipAddress", default=None, namespaces=NS)
-        mask = ip_node.findtext("ns:subnetMask", default=None, namespaces=NS)
+        if selected is None:
+            selected = interfaces[0]
+            logger.debug(
+                "hikvision network extractor fallback to first interface | interfaces=%d",
+                len(interfaces),
+            )
 
-        gateway = ip_node.findtext("ns:DefaultGateway/ns:ipAddress", default=None, namespaces=NS)
+        ip = selected.get("ip")
+        mask = selected.get("mask")
+        gateway = selected.get("gateway")
+        mac = selected.get("mac")
 
-        mac = iface.findtext(".//ns:MACAddress", default=None, namespaces=NS)
-
-        # ничего полезного не нашли
         if not any([ip, mask, gateway, mac]):
             return None
 
+        # ──────────────────────────────────────────────
+        # CIDR + gateway check
+        # ──────────────────────────────────────────────
         cidr: Optional[int] = None
         gateway_in_subnet: Optional[bool] = None
 
@@ -56,20 +108,20 @@ class HikvisionNetworkExtractor:
                 cidr = net.prefixlen
                 if gateway:
                     gateway_in_subnet = ipaddress.IPv4Address(gateway) in net
+
+                    subnet = subnet_address_cidr(ip, cidr)
+
             except ValueError:
-                # некорректные ip/mask/gw — просто не считаем cidr/subnet-check
                 cidr = None
                 gateway_in_subnet = None
-
-        mac_norm = None
-        if mac:
-            mac_norm = mac.strip().upper().replace("-", ":")
+                subnet = None
 
         return NetworkInfo(
             ip=ip,
             mask=mask,
             cidr=cidr,
             gateway=gateway,
+            mac=mac,
             gateway_in_subnet=gateway_in_subnet,
-            mac=mac_norm,
+            subnet=subnet,
         )
