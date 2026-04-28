@@ -89,6 +89,7 @@ class DahuaCgiClient:
         self,
         path: str,
         *,
+        allow_anonymous: bool = False,
         force_basic: bool = False,
     ) -> Optional[str]:
         base = await self._get_base_url()
@@ -98,6 +99,7 @@ class DahuaCgiClient:
         return await self.http.get(
             path,
             base_url=base,
+            allow_anonymous=allow_anonymous,
             force_basic=force_basic,
         )
 
@@ -116,10 +118,27 @@ class DahuaCgiClient:
         if raw:
             return raw
 
-        return await self._get(
+        raw = await self._get(
             "/cgi-bin/main-cgi?action=getDeviceInfo",
             force_basic=True,
         )
+        if raw:
+            return raw
+
+        fallback_parts = []
+
+        device_type = await self.get_device_type()
+        if device_type:
+            fallback_parts.append(device_type)
+
+        serial_no = await self.get_serial_no()
+        if serial_no:
+            fallback_parts.append(serial_no)
+
+        if fallback_parts:
+            return "\n".join(fallback_parts)
+
+        return None
 
     async def get_software_version(self) -> Optional[str]:
         """
@@ -127,6 +146,18 @@ class DahuaCgiClient:
         """
         return await self._get(
             "/cgi-bin/magicBox.cgi?action=getSoftwareVersion",
+        )
+
+    async def get_device_type(self) -> Optional[str]:
+        return await self._get(
+            "/cgi-bin/magicBox.cgi?action=getDeviceType",
+            force_basic=True,
+        )
+
+    async def get_serial_no(self) -> Optional[str]:
+        return await self._get(
+            "/cgi-bin/magicBox.cgi?action=getSerialNo",
+            force_basic=True,
         )
 
     # ─────────────────────────────────────

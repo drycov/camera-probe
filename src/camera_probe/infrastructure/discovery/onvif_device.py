@@ -1,16 +1,25 @@
 from __future__ import annotations
 import asyncio
+import base64
+import hashlib
+import os
+import xml.etree.ElementTree as ET
 
 import aiohttp
 import logging
+from datetime import datetime, timezone
 from typing import Dict, Iterable
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 
-SOAP_BODY = """<?xml version="1.0" encoding="UTF-8"?>
+SOAP_BODY_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
-            xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+            xmlns:tds="http://www.onvif.org/ver10/device/wsdl"
+            xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+            xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">
+  {header}
   <s:Body>
     <tds:GetDeviceInformation/>
   </s:Body>
@@ -21,6 +30,8 @@ SOAP_BODY = """<?xml version="1.0" encoding="UTF-8"?>
 async def onvif_get_device_information(
     xaddr: str,
     timeout: float = 3.0,
+    username: str | None = None,
+    password: str | None = None,
 ) -> Dict[str, str]:
     """
     Call ONVIF GetDeviceInformation on device_service XAddr.
@@ -30,92 +41,78 @@ async def onvif_get_device_information(
 
     logger.debug("ONVIF GetDeviceInformation started: %s", xaddr)
 
-    headers = {
-        "Content-Type": "application/soap+xml; charset=utf-8",
-    }
+    request_variants = [_build_get_device_information_body()]
+    if username and password:
+        request_variants.append(
+            _build_get_device_information_body(
+                username=username,
+                password=password,
+            )
+        )
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
+    last_text = ""
+    for index, body in enumerate(request_variants, start=1):
+        response = await _post_soap(
+            xaddr=xaddr,
+            body=body,
+            timeout=timeout,
+        )
+        if response is None:
+            continue
+
+        status, text = response
+        last_text = text
+
+        logger.trace(
+            "ONVIF GetDeviceInformation HTTP %s attempt=%s",
+            status,
+            index,
+        )
+
+        if status == 401:
+            logger.debug(
+                "ONVIF GetDeviceInformation requires authentication: %s attempt=%s",
                 xaddr,
-                data=SOAP_BODY,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=timeout),
-            ) as resp:
+                index,
+            )
+            continue
 
-                logger.trace(
-                    "ONVIF GetDeviceInformation HTTP %s",
-                    resp.status,
-                )
+        if status != 200:
+            logger.debug(
+                "ONVIF GetDeviceInformation unexpected status %s on %s attempt=%s",
+                status,
+                xaddr,
+                index,
+            )
+            continue
 
-                if resp.status == 401:
-                    logger.debug(
-                        "ONVIF GetDeviceInformation requires authentication: %s",
-                        xaddr,
-                    )
-                    return {}
-
-                if resp.status != 200:
-                    logger.debug(
-                        "ONVIF GetDeviceInformation unexpected status %s on %s",
-                        resp.status,
-                        xaddr,
-                    )
-                    return {}
-
-                text = await resp.text(errors="ignore")
-                logger.trace(
-                    "ONVIF GetDeviceInformation response: %s",
-                    text,
-                )
-
-    except aiohttp.ClientError as e:
-        logger.debug(
-            "ONVIF GetDeviceInformation HTTP error on %s: %s",
-            xaddr,
-            e,
-        )
-        return {}
-
-    except Exception:
-        logger.exception(
-            "ONVIF GetDeviceInformation unexpected error on %s",
-            xaddr,
-        )
-        return {}
-
-    # ─── Parse XML (simple, dependency-free) ─────────────────────
-
-    def _extract(tag: str) -> str | None:
-        start = text.find(f"<{tag}>")
-        if start == -1:
-            return None
-        start += len(tag) + 2
-        end = text.find(f"</{tag}>", start)
-        if end == -1:
-            return None
-        return text[start:end].strip()
-
-    evidence: Dict[str, str] = {}
-
-    for field in (
-        "Manufacturer",
-        "Model",
-        "FirmwareVersion",
-        "SerialNumber",
-        "HardwareId",
-    ):
-        value = _extract(field)
-        if value:
-            evidence[field.lower()] = value
-
-    if evidence:
-        logger.debug(
-            "ONVIF device information collected: %s",
-            evidence,
+        logger.trace(
+            "ONVIF GetDeviceInformation response: %s",
+            text,
         )
 
-    return evidence
+        evidence = _parse_device_information_xml(text)
+        if evidence:
+            logger.debug(
+                "ONVIF device information collected: %s",
+                evidence,
+            )
+            if index > 1:
+                evidence["onvif_auth"] = "wsse_username_token"
+            return evidence
+
+        if _is_not_authorized_fault(text):
+            logger.debug(
+                "ONVIF GetDeviceInformation returned authorization fault: %s attempt=%s",
+                xaddr,
+                index,
+            )
+            continue
+
+    if last_text and _is_not_authorized_fault(last_text):
+        logger.debug("ONVIF GetDeviceInformation authorization failed on %s", xaddr)
+
+    return {}
 
 async def onvif_unicast_probe(
     ip: str,
@@ -132,7 +129,7 @@ async def onvif_unicast_probe(
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     url,
-                    data=SOAP_BODY,
+                    data=_build_get_device_information_body(),
                     headers={"Content-Type": "application/soap+xml"},
                     timeout=aiohttp.ClientTimeout(total=2.0),
                 ) as resp:
@@ -171,7 +168,7 @@ async def onvif_https_unicast_probe(
             ) as session:
                 async with session.post(
                     url,
-                    data=SOAP_BODY,
+                    data=_build_get_device_information_body(),
                     headers={
                         "Content-Type": "application/soap+xml; charset=utf-8",
                     },
@@ -234,7 +231,7 @@ async def onvif_https_auth_probe(
             ) as session:
                 async with session.post(
                     url,
-                    data=SOAP_BODY,
+                    data=_build_get_device_information_body(),
                     headers={
                         "Content-Type": "application/soap+xml; charset=utf-8",
                     },
@@ -276,4 +273,122 @@ async def onvif_https_auth_probe(
             )
 
     return xaddrs
+
+
+def _parse_device_information_xml(text: str) -> Dict[str, str]:
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        logger.debug("ONVIF device information XML parse failed")
+        return {}
+
+    evidence: Dict[str, str] = {}
+
+    field_map = {
+        "Manufacturer": "onvif_manufacturer",
+        "Model": "onvif_model",
+        "FirmwareVersion": "onvif_firmwareversion",
+        "SerialNumber": "onvif_serialnumber",
+        "HardwareId": "onvif_hardwareid",
+    }
+
+    for tag, key in field_map.items():
+        value = _find_text(root, tag)
+        if value:
+            evidence[key] = value
+
+    return evidence
+
+
+def _find_text(root: ET.Element, tag_suffix: str) -> str | None:
+    for element in root.iter():
+        if element.tag.endswith(tag_suffix) and element.text:
+            return element.text.strip()
+    return None
+
+
+def _build_get_device_information_body(
+    *,
+    username: str | None = None,
+    password: str | None = None,
+) -> str:
+    header = ""
+    if username and password:
+        created = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        nonce_bytes = os.urandom(16)
+        digest = hashlib.sha1(
+            nonce_bytes + created.encode("utf-8") + password.encode("utf-8")
+        ).digest()
+        password_digest = base64.b64encode(digest).decode("ascii")
+        nonce = base64.b64encode(nonce_bytes).decode("ascii")
+
+        header = f"""
+  <s:Header>
+    <wsse:Security s:mustUnderstand="1">
+      <wsse:UsernameToken>
+        <wsse:Username>{_xml_escape(username)}</wsse:Username>
+        <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">{password_digest}</wsse:Password>
+        <wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">{nonce}</wsse:Nonce>
+        <wsu:Created>{created}</wsu:Created>
+      </wsse:UsernameToken>
+    </wsse:Security>
+  </s:Header>"""
+
+    return SOAP_BODY_TEMPLATE.format(header=header)
+
+
+async def _post_soap(
+    *,
+    xaddr: str,
+    body: str,
+    timeout: float,
+) -> tuple[int, str] | None:
+    headers = {
+        "Content-Type": "application/soap+xml; charset=utf-8",
+    }
+
+    session_kwargs = {}
+    if urlparse(xaddr).scheme == "https":
+        session_kwargs["connector"] = aiohttp.TCPConnector(ssl=False)
+
+    try:
+        async with aiohttp.ClientSession(**session_kwargs) as session:
+            async with session.post(
+                xaddr,
+                data=body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                text = await resp.text(errors="ignore")
+                return resp.status, text
+
+    except aiohttp.ClientError as e:
+        logger.debug(
+            "ONVIF GetDeviceInformation HTTP error on %s: %s",
+            xaddr,
+            e,
+        )
+        return None
+
+    except Exception:
+        logger.exception(
+            "ONVIF GetDeviceInformation unexpected error on %s",
+            xaddr,
+        )
+        return None
+
+
+def _is_not_authorized_fault(text: str) -> bool:
+    lowered = text.lower()
+    return "notauthorized" in lowered or "not authorized" in lowered
+
+
+def _xml_escape(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
 

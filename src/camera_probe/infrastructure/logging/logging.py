@@ -8,6 +8,7 @@ import sys
 import colorama
 
 from camera_probe.infrastructure.logging.pretty import indent_block, pretty_kv, pretty_xml
+
 colorama.just_fix_windows_console()
 
 TRACE_LEVEL = 5
@@ -31,6 +32,9 @@ def _add_trace_level() -> None:
     logging.Logger.trace = trace  # type: ignore[attr-defined]
 
 
+_add_trace_level()
+
+
 # ────────────────────────────────────────────────
 # Color formatter
 # ────────────────────────────────────────────────
@@ -51,6 +55,7 @@ class ColorFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         original_levelname = record.levelname
         original_msg = record.msg
+        original_args = record.args
 
         color = self.COLORS.get(record.levelname, "")
 
@@ -63,8 +68,8 @@ class ColorFormatter(logging.Formatter):
         # ─────────────────────────────
         # Pretty TRACE payload
         # ─────────────────────────────
-        if original_levelname == "TRACE" and isinstance(record.msg, str):
-            msg = record.msg.strip()
+        if original_levelname == "TRACE":
+            msg = record.getMessage().strip()
 
             if msg.startswith("<") and msg.endswith(">"):
                 msg = indent_block(pretty_xml(msg))
@@ -80,6 +85,7 @@ class ColorFormatter(logging.Formatter):
         finally:
             record.levelname = original_levelname
             record.msg = original_msg
+            record.args = original_args
 
 # ────────────────────────────────────────────────
 # Setup
@@ -99,6 +105,15 @@ def setup_logging(*, level: str = "INFO") -> None:
     root.setLevel(numeric_level)
 
     if root.handlers:
+        for handler in root.handlers:
+            handler.setLevel(numeric_level)
+            if not isinstance(handler.formatter, ColorFormatter):
+                handler.setFormatter(
+                    ColorFormatter(
+                        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S",
+                    )
+                )
         return
 
     handler = logging.StreamHandler(sys.stdout)

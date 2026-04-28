@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Optional, Iterable
+from typing import Any, Iterable, Optional
 from urllib.parse import urljoin
 
 import aiohttp
@@ -11,6 +11,12 @@ import requests
 from requests.auth import HTTPDigestAuth, HTTPBasicAuth
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Accept": "application/xml",
+    "Connection": "close",
+}
 
 
 class HttpClient:
@@ -62,13 +68,7 @@ class HttpClient:
 
         session = requests.Session()
         session.auth = self._digest
-        session.headers.update(
-            {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                "Accept": "application/xml",
-                "Connection": "close",
-            }
-        )
+        session.headers.update(DEFAULT_HEADERS)
 
         self._session = session
 
@@ -99,38 +99,42 @@ class HttpClient:
 
                 for path in test_paths:
                     url = urljoin(base, path)
-
-                    # HEAD
-                    try:
-                        async with session.head(
-                            url,
-                            ssl=self.verify_ssl,
-                            allow_redirects=False,
-                        ) as resp:
-                            if resp.status in ok_statuses:
-                                self._base_url = base
-                                self._base_ts = time.monotonic()
-                                logger.debug("Base URL detected (HEAD): %s", base)
-                                return base
-                    except Exception:
-                        pass
-
-                    # GET fallback (CRITICAL for Hikvision)
-                    try:
-                        async with session.get(
-                            url,
-                            ssl=self.verify_ssl,
-                            allow_redirects=False,
-                        ) as resp:
-                            if resp.status in ok_statuses:
-                                self._base_url = base
-                                self._base_ts = time.monotonic()
-                                logger.debug("Base URL detected (GET): %s", base)
-                                return base
-                    except Exception:
-                        pass
+                    detected = await self._probe_base_url(
+                        session=session,
+                        base=base,
+                        url=url,
+                        ok_statuses=ok_statuses,
+                    )
+                    if detected:
+                        return detected
 
         logger.warning("Base URL not found | ip=%s", self.ip)
+        return None
+
+    async def _probe_base_url(
+        self,
+        *,
+        session: aiohttp.ClientSession,
+        base: str,
+        url: str,
+        ok_statuses: tuple[int, ...],
+    ) -> Optional[str]:
+        for method in ("head", "get"):
+            try:
+                request = getattr(session, method)
+                async with request(
+                    url,
+                    ssl=self.verify_ssl,
+                    allow_redirects=False,
+                ) as resp:
+                    if resp.status in ok_statuses:
+                        self._base_url = base
+                        self._base_ts = time.monotonic()
+                        logger.debug("Base URL detected (%s): %s", method.upper(), base)
+                        return base
+            except Exception:
+                continue
+
         return None
 
     # ─────────────────────────────────────────────
@@ -146,44 +150,50 @@ class HttpClient:
         force_basic: bool = False,
     ) -> Optional[str]:
         url = urljoin(base, path)
+        response: requests.Response | None = None
 
         try:
             # 0) Anonymous
             if allow_anonymous and self.try_anonymous:
-                r = requests.get(
+                response = requests.get(
                     url,
                     timeout=self.timeout,
                     verify=self.verify_ssl,
+                    headers=DEFAULT_HEADERS,
                 )
-                if r.status_code == 200:
-                    return r.text
+                if response.status_code == 200:
+                    return response.text
 
             # 1) Digest (primary)
             if self._session and self._digest:
-                r = self._session.get(
+                response = self._session.get(
                     url,
                     timeout=self.timeout,
                     verify=self.verify_ssl,
                 )
-                if r.status_code == 200:
-                    return r.text
+                if response.status_code == 200:
+                    return response.text
 
             # 2) Basic fallback
-            if self._basic and (force_basic or (r and r.status_code == 401)):
-                r = requests.get(
+            should_try_basic = self._basic and (
+                force_basic or (response is not None and response.status_code == 401)
+            )
+            if should_try_basic:
+                response = requests.get(
                     url,
                     auth=self._basic,
                     timeout=self.timeout,
                     verify=self.verify_ssl,
+                    headers=DEFAULT_HEADERS,
                 )
-                if r.status_code == 200:
-                    return r.text
+                if response.status_code == 200:
+                    return response.text
 
             logger.debug(
                 "HTTP non-200 | ip=%s | path=%s | status=%s",
                 self.ip,
                 path,
-                getattr(r, "status_code", None),
+                getattr(response, "status_code", None),
             )
             return None
 
@@ -192,6 +202,31 @@ class HttpClient:
                 "HTTP failed | ip=%s | path=%s | error=%s",
                 self.ip,
                 path,
+                type(exc).__name__,
+            )
+            return None
+
+    def _raw_get_sync(self, url: str) -> Optional[dict[str, Any]]:
+        try:
+            response = requests.get(
+                url,
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+                allow_redirects=False,
+                headers=DEFAULT_HEADERS,
+            )
+            return {
+                "status": response.status_code,
+                "headers": {
+                    key.lower(): value for key, value in response.headers.items()
+                },
+                "text": response.text,
+            }
+        except Exception as exc:
+            logger.debug(
+                "HTTP raw_get failed | ip=%s | url=%s | error=%s",
+                self.ip,
+                url,
                 type(exc).__name__,
             )
             return None
@@ -219,3 +254,6 @@ class HttpClient:
             allow_anonymous=allow_anonymous,
             force_basic=force_basic,
         )
+
+    async def raw_get(self, url: str) -> Optional[dict[str, Any]]:
+        return await asyncio.to_thread(self._raw_get_sync, url)

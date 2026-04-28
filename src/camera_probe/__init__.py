@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# Ensure custom TRACE logging level exists even on direct submodule imports.
+from camera_probe.infrastructure.logging.logging import setup_logging as _setup_logging
+
 # ────────────────────────────────────────────────
 # Public API functions
 # ────────────────────────────────────────────────

@@ -4,7 +4,7 @@ import logging
 from typing import Optional, Type, TypeVar
 
 from camera_probe.application.policies.extractor_policy import ExtractorPolicy
-from camera_probe.infrastructure.adapters.vendor_aliases import VENDOR_ALIASES
+from camera_probe.infrastructure.vendor import normalize_vendor
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +34,10 @@ class ExtractorFactory:
         # ──────────────────────────────────────────────
         # Vendor normalization
         # ──────────────────────────────────────────────
-        if not vendor:
-            if policy is ExtractorPolicy.STRICT:
-                raise RuntimeError("vendor is required for STRICT extractor creation")
-            return fallback_cls() if fallback_cls else None
-
-        normalized = VENDOR_ALIASES.get(vendor, vendor).strip().lower()
+        normalized = normalize_vendor(vendor)
         if not normalized:
             if policy is ExtractorPolicy.STRICT:
-                raise RuntimeError("normalized vendor is empty")
+                raise RuntimeError("vendor is required for STRICT extractor creation")
             return fallback_cls() if fallback_cls else None
 
         # ──────────────────────────────────────────────

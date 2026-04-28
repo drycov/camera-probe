@@ -34,6 +34,8 @@ DEFAULT_PATHS = [
     "/doc/index.html#/portal/login",
 ]
 
+PREFERRED_HTTP_PORT_ORDER = (80, 443, 81, 8080, 8000, 8888)
+
 
 async def http_auth_fingerprint(
     ip: str,
@@ -50,11 +52,12 @@ async def http_auth_fingerprint(
     """
 
     evidence: Dict[str, str] = {}
+    ordered_ports = _sort_ports(ports)
 
     logger.debug(
         "HTTP discovery started | ip=%s | ports=%s | timeout=%.1fs",
         ip,
-        ports,
+        ordered_ports,
         timeout,
     )
 
@@ -69,7 +72,7 @@ async def http_auth_fingerprint(
     # ────────────────────────────────────────────────
     # 1. STRONG: vendor-specific API endpoints
     # ────────────────────────────────────────────────
-    for port in ports:
+    for port in ordered_ports:
         for vendor, paths in VENDOR_HTTP_MARKERS.items():
             for path in paths:
                 url = f"http://{ip}:{port}{path}"
@@ -111,7 +114,7 @@ async def http_auth_fingerprint(
     # ────────────────────────────────────────────────
     # 2. WEAK: generic HTTP probing
     # ────────────────────────────────────────────────
-    for port in ports:
+    for port in ordered_ports:
         for path in DEFAULT_PATHS:
             url = f"http://{ip}:{port}{path}"
             logger.trace("HTTP probe | %s", url)
@@ -169,3 +172,11 @@ def _extract_realm(www_auth: str) -> str | None:
 def _extract_auth_type(www_auth: str) -> str | None:
     m = re.match(r"^(Basic|Digest)\s", www_auth, re.IGNORECASE)
     return m.group(1).capitalize() if m else None
+
+
+def _sort_ports(ports: list[int] | tuple[int, ...]) -> list[int]:
+    preferred_index = {port: index for index, port in enumerate(PREFERRED_HTTP_PORT_ORDER)}
+    return sorted(
+        ports,
+        key=lambda port: (preferred_index.get(port, len(PREFERRED_HTTP_PORT_ORDER)), port),
+    )

@@ -17,6 +17,7 @@ from camera_probe.infrastructure.network.registry import NetworkExtractorRegistr
 
 logger = logging.getLogger(__name__)
 
+
 @register_adapter("hikvision")
 class HikvisionAdapter(BaseCameraAdapter):
     """
@@ -34,46 +35,21 @@ class HikvisionAdapter(BaseCameraAdapter):
         try:
             device_raw = await client.get_device_info_raw()
             network_raw = await client.get_network_info_raw()
-
+            network_source = client._last_network_info_path
         finally:
             client.close()
 
-        # ──────────────────────────────────────────────
-        # Device extractor (OPTIONAL)
-        # ──────────────────────────────────────────────
-        device_extractor = ExtractorFactory.create(
-            vendor="hikvision",
-            registry=DeviceExtractorRegistry,
-            policy=ExtractorPolicy.OPTIONAL,
-            fallback_cls=GenericDeviceExtractor,
+        device_info = self._extract_device_info(device_raw)
+        network = self._extract_network_info(network_raw)
+        confidence = self._resolve_confidence(
+            device_info=device_info,
+            network=network,
         )
 
-        device_info = (
-            device_extractor.extract(device_raw)
-            if device_extractor and device_raw
-            else None
-        )
-
-        # ──────────────────────────────────────────────
-        # Network extractor (STRICT)
-        # ──────────────────────────────────────────────
-        network = None
-        if network_raw:
-            network_extractor = ExtractorFactory.create(
-                vendor="hikvision",
-                registry=NetworkExtractorRegistry,
-                policy=ExtractorPolicy.STRICT,
-                fallback_cls=GenericNetworkExtractor,
-            )
-            network = network_extractor.extract(network_raw)
-                
-        # ──────────────────────────────────────────────
-        # Assemble ProbeResult
-        # ──────────────────────────────────────────────
         return ProbeResult(
             ip=self.ip,
             vendor="Hikvision",
-            confidence=0.95 if device_info else 0.6,
+            confidence=confidence,
             model=device_info.get("model") if device_info else None,
             serial=device_info.get("serial") if device_info else None,
             mac=device_info.get("mac") if device_info else None,
@@ -82,5 +58,55 @@ class HikvisionAdapter(BaseCameraAdapter):
             raw={
                 "device_raw": device_raw,
                 "network_raw": network_raw,
+                "network_source": network_source,
+                "device_info_available": bool(device_info),
+                "network_info_available": bool(network),
             },
         )
+
+    @staticmethod
+    def _extract_device_info(device_raw: str | None):
+        device_extractor = ExtractorFactory.create(
+            vendor="hikvision",
+            registry=DeviceExtractorRegistry,
+            policy=ExtractorPolicy.OPTIONAL,
+            fallback_cls=GenericDeviceExtractor,
+        )
+        if not device_extractor or not device_raw:
+            return None
+        return device_extractor.extract(device_raw)
+
+    def _extract_network_info(self, network_raw: str | None):
+        if not network_raw:
+            return None
+
+        network_extractor = self._create_network_extractor()
+        if hasattr(network_extractor, "_target_ip"):
+            network_extractor._target_ip = self.ip
+        return network_extractor.extract(network_raw)
+
+    @staticmethod
+    def _create_network_extractor():
+        network_extractor = ExtractorFactory.create(
+            vendor="hikvision",
+            registry=NetworkExtractorRegistry,
+            policy=ExtractorPolicy.STRICT,
+            fallback_cls=GenericNetworkExtractor,
+        )
+        return network_extractor
+
+    @staticmethod
+    def _resolve_confidence(*, device_info, network) -> float:
+        if device_info:
+            if (
+                device_info.get("model")
+                or device_info.get("serial")
+                or device_info.get("mac")
+            ):
+                return 0.95
+            return 0.8
+
+        if network:
+            return 0.72
+
+        return 0.6

@@ -24,7 +24,13 @@ class HikvisionDeviceExtractor:
         NS = self._extract_ns(root)
 
         model = self._find(root, NS, "model")
-        serial = self._find(root, NS, "serialNumber")
+        raw_serial = self._find(root, NS, "serialNumber")
+        sub_serial = self._find(root, NS, "subSerialNumber")
+        serial = self._normalize_serial(
+            model=model,
+            serial=raw_serial,
+            sub_serial=sub_serial,
+        )
         mac = self._find(root, NS, "macAddress", "MACAddress")
         firmware = self._find(root, NS, "firmwareVersion", "softwareVersion")
         manufacturer = self._find(root, NS, "manufacturer") or "Hikvision"
@@ -70,3 +76,24 @@ class HikvisionDeviceExtractor:
                 return el.text.strip()
 
         return None
+
+    @staticmethod
+    def _normalize_serial(
+        *,
+        model: Optional[str],
+        serial: Optional[str],
+        sub_serial: Optional[str],
+    ) -> Optional[str]:
+        if not serial:
+            return sub_serial.strip() if sub_serial else None
+
+        normalized = serial.strip()
+        if model and normalized.startswith(model):
+            suffix = normalized[len(model):].strip(" -")
+            if suffix:
+                return suffix
+
+        if normalized:
+            return normalized
+
+        return sub_serial.strip() if sub_serial else None

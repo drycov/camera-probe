@@ -79,19 +79,23 @@ class DahuaAdapter(BaseCameraAdapter):
                 fallback_cls=GenericNetworkExtractor,
             )
             network = network_extractor.extract(raw_network)
-            
+
+        confidence = self._resolve_confidence(
+            device_info=device_info,
+            version_info=version_info,
+            network=network,
+        )
+
         # ──────────────────────────────────────────────
         # Assemble ProbeResult
         # ──────────────────────────────────────────────
         return ProbeResult(
             ip=self.ip,
             vendor="Dahua",
-            confidence=0.95 if device_info else 0.6,
+            confidence=confidence,
             model=device_info.get("model") if device_info else None,
             serial=device_info.get("serial") if device_info else None,
-            mac=(
-                # network.mac
-                # if network and network.mac
+            mac=network.mac if network and network.mac else (
                 device_info.get("mac") if device_info else None
             ),
             firmware=version_info.get("firmware") if version_info else None,
@@ -100,5 +104,28 @@ class DahuaAdapter(BaseCameraAdapter):
                 "device": raw_device,
                 "network": raw_network,
                 "version": raw_version,
+                "device_info_available": bool(device_info),
+                "version_info_available": bool(version_info),
+                "network_info_available": bool(network),
             },
         )
+
+    @staticmethod
+    def _resolve_confidence(
+        *,
+        device_info,
+        version_info,
+        network,
+    ) -> float:
+        if device_info:
+            if device_info.get("model") or device_info.get("serial") or device_info.get("mac"):
+                return 0.95
+            return 0.8
+
+        if version_info and network:
+            return 0.8
+
+        if version_info or network:
+            return 0.72
+
+        return 0.6

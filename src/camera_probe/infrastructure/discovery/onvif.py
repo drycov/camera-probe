@@ -6,10 +6,17 @@ import logging
 import socket
 import uuid
 from typing import Dict
+from xml.etree import ElementTree as ET
 
 logger = logging.getLogger(__name__)
 
 ONVIF_MULTICAST = ("239.255.255.250", 3702)
+ONVIF_NAMESPACES = {
+    "soap-env": "http://www.w3.org/2003/05/soap-envelope",
+    "wsa": "http://schemas.xmlsoap.org/ws/2004/08/addressing",
+    "d": "http://schemas.xmlsoap.org/ws/2005/04/discovery",
+    "dn": "http://www.onvif.org/ver10/network/wsdl",
+}
 
 
 def _build_probe_message() -> bytes:
@@ -17,7 +24,8 @@ def _build_probe_message() -> bytes:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <e:Envelope xmlns:e="http://www.w3.org/2003/05/soap-envelope"
             xmlns:w="http://schemas.xmlsoap.org/ws/2004/08/addressing"
-            xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+            xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery"
+            xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
   <e:Header>
     <w:MessageID>uuid:{message_id}</w:MessageID>
     <w:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To>
@@ -77,21 +85,10 @@ async def onvif_probe(
         logger.trace("ONVIF response from %s: %s", ip, text)
 
         evidence["onvif"] = "true"
+        evidence.update(_parse_probe_match(text))
 
-        if "XAddrs>" in text:
-            start = text.find("XAddrs>") + 7
-            end = text.find("</", start)
-            evidence["onvif_xaddr"] = text[start:end].strip()
-
-        if "Manufacturer>" in text:
-            start = text.find("Manufacturer>") + 13
-            end = text.find("</", start)
-            evidence["manufacturer"] = text[start:end].strip()
-
-        if "Model>" in text:
-            start = text.find("Model>") + 6
-            end = text.find("</", start)
-            evidence["model"] = text[start:end].strip()
+        if not evidence.get("onvif_xaddrs") and not evidence.get("onvif_xaddr"):
+            logger.debug("ONVIF response did not contain XAddrs for %s", ip)
 
         logger.debug("ONVIF evidence collected for %s: %s", ip, evidence)
         return evidence
@@ -103,3 +100,36 @@ async def onvif_probe(
         sock.close()
 
     return {}
+
+
+def _parse_probe_match(text: str) -> Dict[str, str]:
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return {}
+
+    evidence: Dict[str, str] = {}
+
+    xaddrs = _find_text(root, "XAddrs")
+    if xaddrs:
+        items = [item.strip() for item in xaddrs.split() if item.strip()]
+        if items:
+            evidence["onvif_xaddr"] = items[0]
+            evidence["onvif_xaddrs"] = " ".join(items)
+
+    scopes = _find_text(root, "Scopes")
+    if scopes:
+        evidence["onvif_scopes"] = scopes
+
+    types = _find_text(root, "Types")
+    if types:
+        evidence["onvif_types"] = types
+
+    return evidence
+
+
+def _find_text(root: ET.Element, tag_suffix: str) -> str | None:
+    for element in root.iter():
+        if element.tag.endswith(tag_suffix) and element.text:
+            return element.text.strip()
+    return None

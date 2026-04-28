@@ -12,7 +12,12 @@ from camera_probe.infrastructure.discovery.tcp import tcp_probe_ports
 from camera_probe.infrastructure.discovery.rtsp import rtsp_options
 from camera_probe.infrastructure.discovery.rtsp_describe import rtsp_describe
 from camera_probe.infrastructure.discovery.http import http_auth_fingerprint
-
+from camera_probe.infrastructure.discovery.onvif import onvif_probe
+from camera_probe.infrastructure.discovery.onvif_device import (
+    onvif_get_device_information,
+    onvif_https_unicast_probe,
+    onvif_unicast_probe,
+)
 
 from camera_probe.infrastructure.fingerprints.registry import FingerprintRegistry
 from camera_probe.infrastructure.sdp.parse_sdp import aggregate_rtsp_vendor_markers
@@ -28,7 +33,7 @@ class DiscoveryEngine(DiscoveryPort):
     """
     Production-grade vendor discovery engine.
     Vendor detection is based ONLY on RTSP and HTTP signals.
-    ONVIF is explicitly excluded from vendor detection.
+    ONVIF supplements vendor detection when RTSP/HTTP markers are weak or absent.
     """
 
     # ────────────────────────────────────────────────
@@ -139,9 +144,13 @@ class DiscoveryEngine(DiscoveryPort):
             if port in open_ports:
                 tasks.append(self._probe_rtsp_options(ip, port, evidence))
 
-        http_ports = [p for p in open_ports if p in HTTP_PORTS]
+        http_ports = [port for port in HTTP_PORTS if port in open_ports]
         if http_ports:
             tasks.append(self._probe_http(ip, http_ports, evidence))
+
+        onvif_ports = [port for port in ONVIF_PORTS if port in open_ports]
+        if onvif_ports:
+            tasks.append(self._probe_onvif(ip, onvif_ports, evidence))
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -256,6 +265,35 @@ class DiscoveryEngine(DiscoveryPort):
         except Exception:
             pass
 
+    async def _probe_onvif(self, ip: str, ports: List[int], evidence: Dict) -> None:
+        try:
+            multicast_ev = await onvif_probe(ip)
+            if multicast_ev:
+                evidence.update(multicast_ev)
+
+            xaddrs = _collect_onvif_xaddrs(multicast_ev)
+            if not xaddrs:
+                xaddrs.extend(await onvif_unicast_probe(ip, ports))
+                xaddrs.extend(await onvif_https_unicast_probe(ip, ports))
+
+            xaddrs = _dedupe_preserve_order(xaddrs)
+            if xaddrs:
+                evidence["onvif_xaddrs"] = " ".join(xaddrs)
+                evidence.setdefault("onvif_xaddr", xaddrs[0])
+
+            for xaddr in xaddrs:
+                device_info = await onvif_get_device_information(
+                    xaddr,
+                    username=username,
+                    password=password,
+                )
+                if device_info:
+                    evidence.update(device_info)
+                    evidence["onvif_device_info_xaddr"] = xaddr
+                    break
+        except Exception:
+            pass
+
     # ────────────────────────────────────────────────
     # Heuristic scoring engine
     # ────────────────────────────────────────────────
@@ -302,6 +340,11 @@ class DiscoveryEngine(DiscoveryPort):
                 if v in s:
                     add(v.capitalize(), self.CONFIDENCE_MAP["http_server"], "HTTP Server")
 
+        # ONVIF manufacturer / model
+        onvif_vendor = _vendor_from_onvif(evidence)
+        if onvif_vendor:
+            add(onvif_vendor, 0.85, "ONVIF")
+
         if not scores:
             return None
 
@@ -317,3 +360,45 @@ class DiscoveryEngine(DiscoveryPort):
 
     def get_stats(self) -> Dict[str, int]:
         return dict(self._stats)
+
+
+def _collect_onvif_xaddrs(evidence: Dict[str, object]) -> list[str]:
+    xaddrs_value = evidence.get("onvif_xaddrs")
+    if isinstance(xaddrs_value, str) and xaddrs_value.strip():
+        return [item.strip() for item in xaddrs_value.split() if item.strip()]
+
+    xaddr_value = evidence.get("onvif_xaddr")
+    if isinstance(xaddr_value, str) and xaddr_value.strip():
+        return [xaddr_value.strip()]
+
+    return []
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
+def _vendor_from_onvif(evidence: Dict[str, object]) -> str | None:
+    manufacturer = evidence.get("onvif_manufacturer")
+    model = evidence.get("onvif_model")
+    manufacturer_text = manufacturer.lower() if isinstance(manufacturer, str) else ""
+    model_text = model.lower() if isinstance(model, str) else ""
+
+    if "hikvision" in manufacturer_text or "ds-" in model_text:
+        return "Hikvision"
+    if "dahua" in manufacturer_text or "dh-" in model_text or "ipc-h" in model_text:
+        return "Dahua"
+    if "axis" in manufacturer_text:
+        return "Axis"
+    if "uniview" in manufacturer_text or "unv" in manufacturer_text:
+        return "Uniview"
+    if "xiongmai" in manufacturer_text or "xm" in model_text:
+        return "Xiongmai"
+
+    return None

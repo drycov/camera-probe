@@ -31,5 +31,5 @@ def pretty_kv(raw: str) -> str:
     return "\n".join(lines)
 
 
-def indent_block(text: str, prefix: str = "│ ") -> str:
+def indent_block(text: str, prefix: str = "| ") -> str:
     return "\n".join(prefix + line for line in text.splitlines())

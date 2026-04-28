@@ -1,109 +1,61 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
+import sys
 from ipaddress import ip_network
-from typing import Optional, List
 
-import typer
 from rich.progress import (
+    BarColumn,
     Progress,
     SpinnerColumn,
-    BarColumn,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
 
 from camera_probe.api import probe as probe_api
-from camera_probe.api import scan as scan_api  # ⬅️ публичный scan
+from camera_probe.api import scan as scan_api
 from camera_probe.application.serializers.probe_result import probe_result_to_dict
 from camera_probe.domain.models.probe_result import ProbeResult
-
-app = typer.Typer()
-
-
-# ────────────────────────────────────────────────
-# Probe command (PUBLIC API)
-# ────────────────────────────────────────────────
+from camera_probe.interface.cli.verbosity import apply_verbosity
 
 
-@app.command()
-def probe(
-    ip: str = typer.Option(..., "--ip", help="IP address of the camera"),
-    username: Optional[str] = typer.Option(None, "--user", help="Username"),
-    password: Optional[str] = typer.Option(None, "--password", help="Password"),
-    timeout: float = typer.Option(5.0, "--timeout", help="Request timeout (seconds)"),
-    force: bool = typer.Option(False, "--force", help="Force probe (skip discovery)"),
-    prefer_force: bool = typer.Option(
-        False,
-        "--prefer-force",
-        help="Prefer force probe if credentials are present",
-    ),
-    json_output: bool = typer.Option(
-        False,
-        "--json",
-        help="Output result as JSON",
-    ),
-) -> None:
-    """
-    Probe a single IP camera.
-    """
+def run_probe(args: argparse.Namespace, *, global_verbose: int = 0) -> None:
+    apply_verbosity(max(global_verbose, getattr(args, "command_verbose", 0) or 0))
 
     try:
         result: ProbeResult = asyncio.run(
             probe_api(
-                ip=ip,
-                username=username,
-                password=password,
-                timeout=timeout,
-                force=force,
-                prefer_force=prefer_force,
+                ip=args.ip,
+                username=args.username,
+                password=args.password,
+                timeout=args.timeout,
+                force=args.force,
+                prefer_force=args.prefer_force,
             )
         )
-
     except KeyboardInterrupt:
-        typer.echo("Interrupted", err=True)
-        raise typer.Exit(code=130)
-
+        print("Interrupted", file=sys.stderr)
+        raise SystemExit(130) from None
     except Exception as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1)
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
 
-    if json_output:
-        typer.echo(
-            json.dumps(
-                probe_result_to_dict(result),
-                indent=2,
-                ensure_ascii=False,
-            )
-        )
-        raise typer.Exit(code=0)
+    if args.json_output:
+        _print_json(probe_result_to_dict(result))
+        return
 
     _print_human(result)
 
 
-# ────────────────────────────────────────────────
-# Scan command (PUBLIC API)
-# ────────────────────────────────────────────────
+def run_scan(args: argparse.Namespace, *, global_verbose: int = 0) -> None:
+    apply_verbosity(max(global_verbose, getattr(args, "command_verbose", 0) or 0))
 
-
-@app.command()
-def scan(
-    cidr: str = typer.Argument(..., help="CIDR to scan (e.g. 10.0.0.0/24)"),
-    username: Optional[str] = typer.Option(None, "--user"),
-    password: Optional[str] = typer.Option(None, "--password"),
-    timeout: float = typer.Option(5.0, "--timeout"),
-    concurrency: int = typer.Option(20, "--concurrency"),
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    """
-    Scan a CIDR for IP cameras.
-    """
-
-    hosts = list(ip_network(cidr, strict=False).hosts())
+    hosts = list(ip_network(args.cidr, strict=False).hosts())
     total = len(hosts)
-    results: List[ProbeResult] = []
+    results: list[ProbeResult] = []
 
     progress = Progress(
         SpinnerColumn(),
@@ -114,16 +66,16 @@ def scan(
         TimeRemainingColumn(),
     )
 
-    async def _run():
+    async def _run() -> None:
         with progress:
             task_id = progress.add_task("Scanning", total=total)
 
             async for result in scan_api(
-                cidr=cidr,
-                username=username,
-                password=password,
-                timeout=timeout,
-                concurrency=concurrency,
+                cidr=args.cidr,
+                username=args.username,
+                password=args.password,
+                timeout=args.timeout,
+                concurrency=args.concurrency,
             ):
                 results.append(result)
                 progress.advance(task_id)
@@ -131,55 +83,52 @@ def scan(
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        typer.echo("Interrupted", err=True)
-        raise typer.Exit(code=130)
+        print("Interrupted", file=sys.stderr)
+        raise SystemExit(130) from None
 
-    if json_output:
-        typer.echo(
-            json.dumps(
-                [probe_result_to_dict(r) for r in results],
-                indent=2,
-                ensure_ascii=False,
-            )
-        )
-        raise typer.Exit(code=0)
+    if args.json_output:
+        _print_json([probe_result_to_dict(result) for result in results])
+        return
 
-    for r in results:
-        typer.echo(f"{r.ip:15} {r.vendor or '-':10} {r.confidence:.2f}")
+    for result in results:
+        print(f"{result.ip:15} {result.vendor or '-':10} {result.confidence:.2f}")
 
 
-# ────────────────────────────────────────────────
-# Human-readable output
-# ────────────────────────────────────────────────
+def _print_json(payload: object) -> None:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def _print_human(result: ProbeResult) -> None:
-    typer.echo(f"IP:         {result.ip}")
-    typer.echo(f"Vendor:     {result.vendor or '-'}")
+    print(f"IP:         {result.ip}")
+    print(f"Vendor:     {result.vendor or '-'}")
 
     if result.model:
-        typer.echo(f"Model:      {result.model}")
+        print(f"Model:      {result.model}")
     if result.serial:
-        typer.echo(f"Serial:     {result.serial}")
+        print(f"Serial:     {result.serial}")
     if result.mac:
-        typer.echo(f"MAC:        {result.mac}")
+        print(f"MAC:        {result.mac}")
     if result.firmware:
-        typer.echo(f"Firmware:   {result.firmware}")
+        print(f"Firmware:   {result.firmware}")
 
     if result.network:
-        typer.echo("Network:")
+        print("Network:")
         if result.network.ip:
-            typer.echo(f"  IP:       {result.network.ip}")
+            print(f"  IP:       {result.network.ip}")
         if result.network.gateway:
-            typer.echo(f"  Gateway:  {result.network.gateway}")
+            print(f"  Gateway:  {result.network.gateway}")
         if result.network.mask:
-            typer.echo(f"  Netmask:  {result.network.mask}")
+            print(f"  Netmask:  {result.network.mask}")
         if result.network.subnet:
-            typer.echo(f"  Subnet:   {result.network.subnet}")
+            print(f"  Subnet:   {result.network.subnet}")
 
     if result.ntp:
-        typer.echo("NTP:")
+        print("NTP:")
         if result.ntp.server:
-            typer.echo(f"  Server:   {result.ntp.server}")
+            print(f"  Server:   {result.ntp.server}")
         if result.ntp.enabled is not None:
-            typer.echo(f"  Enabled:  {result.ntp.enabled}")
+            print(f"  Enabled:  {result.ntp.enabled}")

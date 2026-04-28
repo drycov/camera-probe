@@ -41,7 +41,7 @@ class FingerprintRegistry:
             try:
                 if fp.match(evidence):
                     logger.debug(
-                        "Fingerprint matched: %s → vendor=%s confidence=%.2f",
+                        "Fingerprint matched: %s -> vendor=%s confidence=%.2f",
                         fp.__class__.__name__,
                         fp.vendor(),
                         fp.confidence(),
