@@ -6,15 +6,6 @@ import json
 import sys
 from ipaddress import ip_network
 
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
-
 from camera_probe.api import probe as probe_api
 from camera_probe.api import scan as scan_api
 from camera_probe.application.serializers.probe_result import probe_result_to_dict
@@ -53,32 +44,17 @@ def run_probe(args: argparse.Namespace, *, global_verbose: int = 0) -> None:
 def run_scan(args: argparse.Namespace, *, global_verbose: int = 0) -> None:
     apply_verbosity(max(global_verbose, getattr(args, "command_verbose", 0) or 0))
 
-    hosts = list(ip_network(args.cidr, strict=False).hosts())
-    total = len(hosts)
     results: list[ProbeResult] = []
 
-    progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        TimeRemainingColumn(),
-    )
-
     async def _run() -> None:
-        with progress:
-            task_id = progress.add_task("Scanning", total=total)
-
-            async for result in scan_api(
-                cidr=args.cidr,
-                username=args.username,
-                password=args.password,
-                timeout=args.timeout,
-                concurrency=args.concurrency,
-            ):
-                results.append(result)
-                progress.advance(task_id)
+        async for result in scan_api(
+            cidr=args.cidr,
+            username=args.username,
+            password=args.password,
+            timeout=args.timeout,
+            concurrency=args.concurrency,
+        ):
+            results.append(result)
 
     try:
         asyncio.run(_run())
