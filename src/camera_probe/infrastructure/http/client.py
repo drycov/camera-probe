@@ -49,6 +49,7 @@ class HttpClient:
 
         self._base_url: Optional[str] = None
         self._base_ts: float = 0.0
+        self._base_not_found_ts: float = 0.0  # cooldown for "not found" warning
 
         self._digest: Optional[HTTPDigestAuth] = None
         self._basic: Optional[HTTPBasicAuth] = None
@@ -108,7 +109,11 @@ class HttpClient:
                     if detected:
                         return detected
 
-        logger.warning("Base URL not found | ip=%s", self.ip)
+        # Cooldown: only log "not found" once per 5 minutes per camera
+        now = time.monotonic()
+        if now - self._base_not_found_ts >= 300:
+            self._base_not_found_ts = now
+            logger.debug("Base URL not found | ip=%s", self.ip)
         return None
 
     async def _probe_base_url(

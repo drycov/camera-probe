@@ -14,7 +14,7 @@ from camera_probe.infrastructure.network.registry import NetworkExtractorRegistr
 
 def build_probe_service(
     *,
-    min_confidence: float = 0.7,
+    min_confidence: float = 0.5,
 ) -> ProbeService:
     """
     Build fully wired ProbeService.
