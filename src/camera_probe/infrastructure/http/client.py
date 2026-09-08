@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from typing import Any, Iterable, Optional
 from urllib.parse import urljoin
@@ -20,17 +21,10 @@ DEFAULT_HEADERS = {
 
 
 class HttpClient:
-    """
-    Universal HTTP client for embedded devices (Hikvision / Dahua / OEM).
+    """HTTP client for embedded devices with race-safe connection state."""
 
-    Principles:
-    - requests.Session + DigestAuth is the source of truth
-    - aiohttp ONLY for base URL discovery
-    - async via asyncio.to_thread
-    - never raises on HTTP errors
-    """
-
-    BASE_TTL = 300  # seconds
+    BASE_TTL = 300
+    BASE_NOT_FOUND_TTL = 300
 
     def __init__(
         self,
@@ -42,79 +36,80 @@ class HttpClient:
         try_anonymous: bool = True,
     ) -> None:
         self.ip = ip
-        self.timeout = timeout
+        self.timeout = max(0.05, timeout)
         self.verify_ssl = verify_ssl
         self.prefer_https = prefer_https
         self.try_anonymous = try_anonymous
 
         self._base_url: Optional[str] = None
-        self._base_ts: float = 0.0
-        self._base_not_found_ts: float = 0.0  # cooldown for "not found" warning
+        self._base_ts = 0.0
+        self._base_not_found_ts = 0.0
+        self._base_lock = asyncio.Lock()
 
         self._digest: Optional[HTTPDigestAuth] = None
         self._basic: Optional[HTTPBasicAuth] = None
-
         self._session: Optional[requests.Session] = None
-
-    # ─────────────────────────────────────────────
-    # Auth
-    # ─────────────────────────────────────────────
+        self._session_lock = threading.RLock()
 
     def set_auth(self, username: str | None, password: str | None) -> None:
         if not username or not password:
             return
 
-        self._digest = HTTPDigestAuth(username, password)
-        self._basic = HTTPBasicAuth(username, password)
-
-        session = requests.Session()
-        session.auth = self._digest
-        session.headers.update(DEFAULT_HEADERS)
-
-        self._session = session
+        with self._session_lock:
+            self._digest = HTTPDigestAuth(username, password)
+            self._basic = HTTPBasicAuth(username, password)
+            if self._session:
+                self._session.close()
+            session = requests.Session()
+            session.auth = self._digest
+            session.headers.update(DEFAULT_HEADERS)
+            self._session = session
 
     def close(self) -> None:
-        if self._session:
-            self._session.close()
-            self._session = None
-
-    # ─────────────────────────────────────────────
-    # Base URL discovery (aiohttp)
-    # ─────────────────────────────────────────────
+        with self._session_lock:
+            if self._session:
+                self._session.close()
+                self._session = None
 
     async def get_base_url(
         self,
         test_paths: Iterable[str],
         ok_statuses: tuple[int, ...] = (200, 401, 403),
     ) -> Optional[str]:
-        if self._base_url and (time.monotonic() - self._base_ts) < self.BASE_TTL:
-            return self._base_url
-
-        schemes = ["https", "http"] if self.prefer_https else ["http", "https"]
-
-        timeout = aiohttp.ClientTimeout(total=self.timeout)
-
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            for scheme in schemes:
-                base = f"{scheme}://{self.ip}"
-
-                for path in test_paths:
-                    url = urljoin(base, path)
-                    detected = await self._probe_base_url(
-                        session=session,
-                        base=base,
-                        url=url,
-                        ok_statuses=ok_statuses,
-                    )
-                    if detected:
-                        return detected
-
-        # Cooldown: only log "not found" once per 5 minutes per camera
         now = time.monotonic()
-        if now - self._base_not_found_ts >= 300:
-            self._base_not_found_ts = now
+        if self._base_url and now - self._base_ts < self.BASE_TTL:
+            return self._base_url
+        if now - self._base_not_found_ts < self.BASE_NOT_FOUND_TTL:
+            return None
+
+        # Several adapter coroutines may ask for the base URL simultaneously.
+        # Only one discovery sequence is allowed to mutate the cache.
+        async with self._base_lock:
+            now = time.monotonic()
+            if self._base_url and now - self._base_ts < self.BASE_TTL:
+                return self._base_url
+            if now - self._base_not_found_ts < self.BASE_NOT_FOUND_TTL:
+                return None
+
+            schemes = ["https", "http"] if self.prefer_https else ["http", "https"]
+            timeout = aiohttp.ClientTimeout(total=self.timeout)
+
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                for scheme in schemes:
+                    base = f"{scheme}://{self.ip}"
+                    for path in test_paths:
+                        detected = await self._probe_base_url(
+                            session=session,
+                            base=base,
+                            url=urljoin(base, path),
+                            ok_statuses=ok_statuses,
+                        )
+                        if detected:
+                            return detected
+
+            self._base_not_found_ts = time.monotonic()
             logger.debug("Base URL not found | ip=%s", self.ip)
-        return None
+            return None
 
     async def _probe_base_url(
         self,
@@ -127,24 +122,17 @@ class HttpClient:
         for method in ("head", "get"):
             try:
                 request = getattr(session, method)
-                async with request(
-                    url,
-                    ssl=self.verify_ssl,
-                    allow_redirects=False,
-                ) as resp:
+                async with request(url, ssl=self.verify_ssl, allow_redirects=False) as resp:
                     if resp.status in ok_statuses:
                         self._base_url = base
                         self._base_ts = time.monotonic()
                         logger.debug("Base URL detected (%s): %s", method.upper(), base)
                         return base
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 continue
-
         return None
-
-    # ─────────────────────────────────────────────
-    # Sync HTTP core (requests)
-    # ─────────────────────────────────────────────
 
     def _request_sync(
         self,
@@ -158,35 +146,30 @@ class HttpClient:
         response: requests.Response | None = None
 
         try:
-            # 0) Anonymous
             if allow_anonymous and self.try_anonymous:
                 response = requests.get(
-                    url,
-                    timeout=self.timeout,
-                    verify=self.verify_ssl,
-                    headers=DEFAULT_HEADERS,
+                    url, timeout=self.timeout, verify=self.verify_ssl, headers=DEFAULT_HEADERS
                 )
                 if response.status_code == 200:
                     return response.text
 
-            # 1) Digest (primary)
-            if self._session and self._digest:
-                response = self._session.get(
-                    url,
-                    timeout=self.timeout,
-                    verify=self.verify_ssl,
-                )
-                if response.status_code == 200:
-                    return response.text
+            with self._session_lock:
+                session = self._session
+                digest = self._digest
+                basic = self._basic
+                if session and digest:
+                    response = session.get(url, timeout=self.timeout, verify=self.verify_ssl)
+                    if response.status_code == 200:
+                        return response.text
 
-            # 2) Basic fallback
-            should_try_basic = self._basic and (
-                force_basic or (response is not None and response.status_code == 401)
-            )
+                should_try_basic = basic and (
+                    force_basic or (response is not None and response.status_code == 401)
+                )
+
             if should_try_basic:
                 response = requests.get(
                     url,
-                    auth=self._basic,
+                    auth=basic,
                     timeout=self.timeout,
                     verify=self.verify_ssl,
                     headers=DEFAULT_HEADERS,
@@ -201,7 +184,6 @@ class HttpClient:
                 getattr(response, "status_code", None),
             )
             return None
-
         except Exception as exc:
             logger.debug(
                 "HTTP failed | ip=%s | path=%s | error=%s",
@@ -222,9 +204,7 @@ class HttpClient:
             )
             return {
                 "status": response.status_code,
-                "headers": {
-                    key.lower(): value for key, value in response.headers.items()
-                },
+                "headers": {key.lower(): value for key, value in response.headers.items()},
                 "text": response.text,
             }
         except Exception as exc:
@@ -235,10 +215,6 @@ class HttpClient:
                 type(exc).__name__,
             )
             return None
-
-    # ─────────────────────────────────────────────
-    # Async wrapper
-    # ─────────────────────────────────────────────
 
     async def get(
         self,
@@ -251,7 +227,6 @@ class HttpClient:
         base = base_url or self._base_url
         if not base:
             return None
-
         return await asyncio.to_thread(
             self._request_sync,
             base,
