@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
@@ -37,9 +38,6 @@ class DiscoveryEngine(DiscoveryPort):
     - at most one RTSP port is used for DESCRIBE;
     - ONVIF is a fallback signal, not a mandatory first phase;
     - every protocol phase is covered by the total deadline.
-
-    This prevents one camera with a black-holed RTSP/HTTP service from occupying a
-    scan worker for an unbounded number of sequential socket timeouts.
     """
 
     CONFIDENCE_MAP = {
@@ -57,8 +55,11 @@ class DiscoveryEngine(DiscoveryPort):
         enable_onvif_fallback: bool = True,
     ) -> None:
         self._fingerprints = FingerprintRegistry()
+        # Stats can be updated from different event loops/threads when the
+        # library is embedded in worker-based applications. Use a thread lock,
+        # not asyncio.Lock, to avoid event-loop affinity.
         self._stats: Dict[str, int] = {}
-        self._stats_lock = asyncio.Lock()
+        self._stats_lock = threading.Lock()
         self._max_rtsp_ports = max(1, min(max_rtsp_ports, len(RTSP_PORTS)))
         self._enable_rtsp_describe = enable_rtsp_describe
         self._enable_onvif_fallback = enable_onvif_fallback
@@ -136,8 +137,7 @@ class DiscoveryEngine(DiscoveryPort):
 
         logger.debug("Open ports for %s: %s", ip, sorted(open_ports))
 
-        # Cheap discovery phase. No sequential RTSP DESCRIBE/ONVIF here.
-        tasks: list[asyncio.Task[None]] = []
+        tasks: list[asyncio.Task[object]] = []
         rtsp_ports = [p for p in RTSP_PORTS if p in open_ports][: self._max_rtsp_ports]
         for port in rtsp_ports:
             tasks.append(asyncio.create_task(self._probe_rtsp_options(ip, port, evidence)))
@@ -150,14 +150,17 @@ class DiscoveryEngine(DiscoveryPort):
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
-                    logger.debug("Discovery phase task failed | ip=%s | error=%s", ip, type(result).__name__)
+                    logger.debug(
+                        "Discovery phase task failed | ip=%s | error=%s",
+                        ip,
+                        type(result).__name__,
+                    )
 
-        # Strong fingerprints can finish without any ONVIF or DESCRIBE traffic.
         fp = self._fingerprints.match(evidence)
         if fp:
             vendor = fp.vendor()
             confidence = fp.confidence()
-            await self._update_stats(vendor)
+            self._update_stats(vendor)
             return DetectResult(
                 ip=ip,
                 vendor=vendor,
@@ -170,7 +173,7 @@ class DiscoveryEngine(DiscoveryPort):
         heuristic = self._heuristic_vendor_scoring(evidence)
         if heuristic and heuristic[1] >= 0.85:
             vendor, confidence, path = heuristic
-            await self._update_stats(vendor)
+            self._update_stats(vendor)
             return DetectResult(
                 ip=ip,
                 vendor=vendor,
@@ -180,7 +183,6 @@ class DiscoveryEngine(DiscoveryPort):
                 status="ok",
             )
 
-        # Expensive/secondary discovery is only entered when cheap signals are weak.
         fallback_tasks: list[asyncio.Task[object]] = []
         if self._enable_rtsp_describe and rtsp_ports:
             fallback_tasks.append(
@@ -195,12 +197,13 @@ class DiscoveryEngine(DiscoveryPort):
                 )
             )
 
-        if self._enable_onvif_fallback and [p for p in ONVIF_PORTS if p in open_ports]:
+        fallback_onvif_ports = [p for p in ONVIF_PORTS if p in open_ports]
+        if self._enable_onvif_fallback and fallback_onvif_ports:
             fallback_tasks.append(
                 asyncio.create_task(
                     self._probe_onvif(
                         ip,
-                        [p for p in ONVIF_PORTS if p in open_ports],
+                        fallback_onvif_ports,
                         username=username,
                         password=password,
                         timeout=timeout_per_port,
@@ -214,20 +217,23 @@ class DiscoveryEngine(DiscoveryPort):
                 if isinstance(result, dict):
                     evidence.update(result)
                 elif isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
-                    logger.debug("Fallback discovery failed | ip=%s | error=%s", ip, type(result).__name__)
+                    logger.debug(
+                        "Fallback discovery failed | ip=%s | error=%s",
+                        ip,
+                        type(result).__name__,
+                    )
 
-        if "rtsp_sdp_raw" in evidence:
-            parsed = evidence.get("rtsp_sdp_parsed")
-            if parsed:
-                markers = aggregate_rtsp_vendor_markers(parsed)
-                if markers:
-                    evidence["rtsp_vendor_markers"] = markers
+        parsed = evidence.get("rtsp_sdp_parsed")
+        if parsed:
+            markers = aggregate_rtsp_vendor_markers(parsed)
+            if markers:
+                evidence["rtsp_vendor_markers"] = markers
 
         fp = self._fingerprints.match(evidence)
         if fp:
             vendor = fp.vendor()
             confidence = fp.confidence()
-            await self._update_stats(vendor)
+            self._update_stats(vendor)
             return DetectResult(
                 ip=ip,
                 vendor=vendor,
@@ -240,7 +246,7 @@ class DiscoveryEngine(DiscoveryPort):
         heuristic = self._heuristic_vendor_scoring(evidence)
         if heuristic:
             vendor, confidence, path = heuristic
-            await self._update_stats(vendor)
+            self._update_stats(vendor)
             return DetectResult(
                 ip=ip,
                 vendor=vendor,
@@ -311,7 +317,6 @@ class DiscoveryEngine(DiscoveryPort):
                 evidence["onvif_xaddrs"] = " ".join(xaddrs)
                 evidence["onvif_xaddr"] = xaddrs[0]
 
-            # One device-information request is enough to identify a vendor.
             for xaddr in xaddrs[:1]:
                 device_info = await onvif_get_device_information(
                     xaddr,
@@ -377,17 +382,17 @@ class DiscoveryEngine(DiscoveryPort):
 
         if not scores:
             return None
-
         vendor, confidence = max(scores.items(), key=lambda item: item[1])
         return vendor, confidence, " | ".join(path)
 
-    async def _update_stats(self, vendor: str) -> None:
-        async with self._stats_lock:
+    def _update_stats(self, vendor: str) -> None:
+        with self._stats_lock:
             self._stats[vendor] = self._stats.get(vendor, 0) + 1
             self._stats["total"] = self._stats.get("total", 0) + 1
 
     def get_stats(self) -> Dict[str, int]:
-        return dict(self._stats)
+        with self._stats_lock:
+            return dict(self._stats)
 
 
 def _collect_onvif_xaddrs(evidence: Dict[str, object]) -> list[str]:
@@ -398,7 +403,6 @@ def _collect_onvif_xaddrs(evidence: Dict[str, object]) -> list[str]:
     xaddr_value = evidence.get("onvif_xaddr")
     if isinstance(xaddr_value, str) and xaddr_value.strip():
         return [xaddr_value.strip()]
-
     return []
 
 
@@ -428,5 +432,4 @@ def _vendor_from_onvif(evidence: Dict[str, object]) -> str | None:
         return "Uniview"
     if "xiongmai" in manufacturer_text or "xm" in model_text:
         return "Xiongmai"
-
     return None
