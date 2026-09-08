@@ -13,10 +13,9 @@ from camera_probe.infrastructure.network.registry import NetworkExtractorRegistr
 def build_probe_service(*, min_confidence: float = 0.5, enable_scheduler: bool | None = None) -> ProbeService:
     """Build the shared probe graph.
 
-    Backward compatibility: ``enable_scheduler`` defaults to the environment
-    switch ``CAMERA_PROBE_ENABLE_PRIORITY_SCHEDULER`` and is disabled by
-    default. Existing callers therefore retain direct probe semantics until
-    the scheduler is explicitly enabled.
+    Backward compatibility is preserved for direct ``ProbeService`` users.
+    The application bootstrap enables the shared priority scheduler by default,
+    while ``CAMERA_PROBE_ENABLE_PRIORITY_SCHEDULER=0`` restores direct mode.
     """
     discovery = DiscoveryEngine()
     adapters = DefaultAdapterFactory()
@@ -24,7 +23,12 @@ def build_probe_service(*, min_confidence: float = 0.5, enable_scheduler: bool |
     NetworkExtractorRegistry.freeze()
 
     if enable_scheduler is None:
-        enable_scheduler = os.getenv("CAMERA_PROBE_ENABLE_PRIORITY_SCHEDULER", "0").lower() in {"1", "true", "yes", "on"}
+        enable_scheduler = os.getenv("CAMERA_PROBE_ENABLE_PRIORITY_SCHEDULER", "1").lower() in {"1", "true", "yes", "on"}
 
     scheduler = ProbeScheduler() if enable_scheduler else None
-    return ProbeService(discovery=discovery, adapters=adapters, min_confidence=min_confidence, scheduler=scheduler)
+    return ProbeService(
+        discovery=discovery,
+        adapters=adapters,
+        min_confidence=min_confidence,
+        scheduler=scheduler,
+    )
