@@ -2,25 +2,23 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Awaitable, TypeVar
 
 from camera_probe.application.services.probe_priority import ProbePriority
+
+T = TypeVar("T")
 
 
 @dataclass(slots=True)
 class _Job:
     priority: ProbePriority
     sequence: int
-    coroutine: object
-    future: asyncio.Future
+    coroutine: Awaitable[object]
+    future: asyncio.Future[object]
 
 
 class ProbeScheduler:
-    """Bounded priority scheduler for health/discovery/manual work.
-
-    Lower numeric priority wins. The scheduler owns a fixed number of workers,
-    so callers cannot create an unbounded task storm. Within a priority level,
-    jobs are FIFO.
-    """
+    """Bounded priority scheduler for health/discovery/manual work."""
 
     def __init__(self, concurrency: int = 16) -> None:
         self._concurrency = max(1, concurrency)
@@ -35,19 +33,21 @@ class ProbeScheduler:
         self._started = True
         self._workers = [asyncio.create_task(self._worker(), name=f"probe-scheduler-{i}") for i in range(self._concurrency)]
 
-    async def submit(self, coroutine, *, priority: ProbePriority = ProbePriority.DISCOVERY):
+    async def submit(self, coroutine: Awaitable[T], *, priority: ProbePriority = ProbePriority.DISCOVERY) -> T:
         await self.start()
         loop = asyncio.get_running_loop()
-        future = loop.create_future()
-        sequence = self._sequence
+        future: asyncio.Future[object] = loop.create_future()
+        job = _Job(priority, self._sequence, coroutine, future)
         self._sequence += 1
-        job = _Job(priority, sequence, coroutine, future)
-        await self._queue.put((int(priority), sequence, job))
+        await self._queue.put((int(priority), job.sequence, job))
         try:
-            return await future
+            return await future  # type: ignore[return-value]
         except asyncio.CancelledError:
             if not future.done():
                 future.cancel()
+            # A queued coroutine must be closed because no worker will consume it.
+            if not future.done() and hasattr(coroutine, "close"):
+                coroutine.close()  # type: ignore[attr-defined]
             raise
 
     async def _worker(self) -> None:
@@ -55,6 +55,8 @@ class ProbeScheduler:
             _, _, job = await self._queue.get()
             try:
                 if job.future.cancelled():
+                    if hasattr(job.coroutine, "close"):
+                        job.coroutine.close()  # type: ignore[attr-defined]
                     continue
                 try:
                     result = await job.coroutine
@@ -74,6 +76,13 @@ class ProbeScheduler:
         for worker in self._workers:
             worker.cancel()
         await asyncio.gather(*self._workers, return_exceptions=True)
+        while not self._queue.empty():
+            _, _, job = self._queue.get_nowait()
+            if hasattr(job.coroutine, "close"):
+                job.coroutine.close()  # type: ignore[attr-defined]
+            if not job.future.done():
+                job.future.cancel()
+            self._queue.task_done()
         self._workers.clear()
         self._started = False
 
