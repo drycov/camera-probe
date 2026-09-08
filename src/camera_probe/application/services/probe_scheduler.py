@@ -15,6 +15,7 @@ class _Job:
     sequence: int
     factory: Callable[[], Awaitable[object]]
     future: asyncio.Future[object]
+    started: bool = False
 
 
 class ProbeScheduler:
@@ -55,10 +56,11 @@ class ProbeScheduler:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[object] = loop.create_future()
 
+        legacy_coroutine: Awaitable[T] | None = None
         if callable(operation):
             factory: Callable[[], Awaitable[object]] = operation  # type: ignore[assignment]
         else:
-            coroutine = operation
+            legacy_coroutine = operation
             consumed = False
 
             def factory() -> Awaitable[object]:
@@ -66,7 +68,7 @@ class ProbeScheduler:
                 if consumed:
                     raise RuntimeError("scheduled awaitable was already consumed")
                 consumed = True
-                return coroutine
+                return operation
 
         job = _Job(priority, self._sequence, factory, future)
         self._sequence += 1
@@ -77,10 +79,8 @@ class ProbeScheduler:
         except asyncio.CancelledError:
             if not future.done():
                 future.cancel()
-            # If the operation is a legacy pre-created coroutine and remains
-            # queued, close it because no worker will consume it.
-            if not future.done() and not callable(operation):
-                coroutine.close() if hasattr(coroutine, "close") else None  # type: ignore[attr-defined]
+            if legacy_coroutine is not None and not job.started and hasattr(legacy_coroutine, "close"):
+                legacy_coroutine.close()  # type: ignore[attr-defined]
             raise
 
     async def _worker(self) -> None:
@@ -89,6 +89,7 @@ class ProbeScheduler:
             try:
                 if job.future.cancelled():
                     continue
+                job.started = True
                 try:
                     result = await job.factory()
                 except asyncio.CancelledError:
