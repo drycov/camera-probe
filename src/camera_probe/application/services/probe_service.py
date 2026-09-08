@@ -1,9 +1,7 @@
-# camera_probe/application/services/probe_service.py
-
 from __future__ import annotations
 
-from typing import Optional
 import logging
+from typing import Optional
 
 from camera_probe.application.dto.probe_request import ProbeRequest
 from camera_probe.application.policies.confidence_policy import is_probe_success
@@ -37,7 +35,7 @@ class ProbeService:
         self._validate_request(request)
         if self._scheduler is None:
             return await self._probe_direct(request)
-        return await self._scheduler.submit(self._probe_direct(request), priority=priority)
+        return await self._scheduler.submit(lambda: self._probe_direct(request), priority=priority)
 
     async def health_probe(self, request: ProbeRequest) -> ProbeResult:
         return await self.probe(request, priority=ProbePriority.HEALTH)
