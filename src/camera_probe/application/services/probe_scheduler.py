@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Awaitable, TypeVar
+from typing import Awaitable, Callable, TypeVar
 
 from camera_probe.application.services.probe_priority import ProbePriority
 
@@ -13,12 +13,16 @@ T = TypeVar("T")
 class _Job:
     priority: ProbePriority
     sequence: int
-    coroutine: Awaitable[object]
+    factory: Callable[[], Awaitable[object]]
     future: asyncio.Future[object]
 
 
 class ProbeScheduler:
-    """Bounded priority scheduler for health/discovery/manual work."""
+    """Bounded priority scheduler for health/discovery/manual work.
+
+    Factories are used instead of already-created coroutines so cancellation
+    while a job is queued cannot leak an un-awaited coroutine.
+    """
 
     def __init__(self, concurrency: int = 16) -> None:
         self._concurrency = max(1, concurrency)
@@ -31,23 +35,52 @@ class ProbeScheduler:
         if self._started:
             return
         self._started = True
-        self._workers = [asyncio.create_task(self._worker(), name=f"probe-scheduler-{i}") for i in range(self._concurrency)]
+        self._workers = [
+            asyncio.create_task(self._worker(), name=f"probe-scheduler-{i}")
+            for i in range(self._concurrency)
+        ]
 
-    async def submit(self, coroutine: Awaitable[T], *, priority: ProbePriority = ProbePriority.DISCOVERY) -> T:
+    async def submit(
+        self,
+        operation: Callable[[], Awaitable[T]] | Awaitable[T],
+        *,
+        priority: ProbePriority = ProbePriority.DISCOVERY,
+    ) -> T:
+        """Submit work while preserving the legacy awaitable API.
+
+        New code should pass a callable factory. Existing callers may still
+        pass an Awaitable and remain source-compatible.
+        """
         await self.start()
         loop = asyncio.get_running_loop()
         future: asyncio.Future[object] = loop.create_future()
-        job = _Job(priority, self._sequence, coroutine, future)
+
+        if callable(operation):
+            factory: Callable[[], Awaitable[object]] = operation  # type: ignore[assignment]
+        else:
+            coroutine = operation
+            consumed = False
+
+            def factory() -> Awaitable[object]:
+                nonlocal consumed
+                if consumed:
+                    raise RuntimeError("scheduled awaitable was already consumed")
+                consumed = True
+                return coroutine
+
+        job = _Job(priority, self._sequence, factory, future)
         self._sequence += 1
         await self._queue.put((int(priority), job.sequence, job))
+
         try:
             return await future  # type: ignore[return-value]
         except asyncio.CancelledError:
             if not future.done():
                 future.cancel()
-            # A queued coroutine must be closed because no worker will consume it.
-            if not future.done() and hasattr(coroutine, "close"):
-                coroutine.close()  # type: ignore[attr-defined]
+            # If the operation is a legacy pre-created coroutine and remains
+            # queued, close it because no worker will consume it.
+            if not future.done() and not callable(operation):
+                coroutine.close() if hasattr(coroutine, "close") else None  # type: ignore[attr-defined]
             raise
 
     async def _worker(self) -> None:
@@ -55,11 +88,9 @@ class ProbeScheduler:
             _, _, job = await self._queue.get()
             try:
                 if job.future.cancelled():
-                    if hasattr(job.coroutine, "close"):
-                        job.coroutine.close()  # type: ignore[attr-defined]
                     continue
                 try:
-                    result = await job.coroutine
+                    result = await job.factory()
                 except asyncio.CancelledError:
                     if not job.future.done():
                         job.future.cancel()
@@ -78,8 +109,6 @@ class ProbeScheduler:
         await asyncio.gather(*self._workers, return_exceptions=True)
         while not self._queue.empty():
             _, _, job = self._queue.get_nowait()
-            if hasattr(job.coroutine, "close"):
-                job.coroutine.close()  # type: ignore[attr-defined]
             if not job.future.done():
                 job.future.cancel()
             self._queue.task_done()
