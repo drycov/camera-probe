@@ -5,14 +5,11 @@
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# ============================================================
-# Project metadata
-# ============================================================
 [project]
 name = "camera-probe"
 description = "Async toolkit for probing IP cameras (Hikvision, Dahua, Axis)"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 version = "1.0.0"
 
@@ -32,7 +29,6 @@ authors = [
 
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -43,9 +39,6 @@ classifiers = [
     "Topic :: Security",
 ]
 
-# ============================================================
-# Runtime dependencies
-# ============================================================
 dependencies = [
     "aiohttp>=3.9",
     "requests>=2.28",
@@ -54,9 +47,6 @@ dependencies = [
     "colorama>=0.4.6",
 ]
 
-# ============================================================
-# Optional dependencies
-# ============================================================
 [project.optional-dependencies]
 onvif = [
     "onvif-zeep>=0.2.12",
@@ -70,45 +60,24 @@ dev = [
     "mypy",
 ]
 
-# ============================================================
-# CLI entrypoint
-# ============================================================
-# [project.scripts]
-# camera-probe = "camera_probe.cli.app:app"
-
 [project.scripts]
 camera-probe = "camera_probe.interface.cli.app:main"
 
-
-# ============================================================
-# Project URLs
-# ============================================================
 [project.urls]
 Homepage = "https://github.com/drycov/camera-probe"
 Repository = "https://github.com/drycov/camera-probe"
 Issues = "https://github.com/drycov/camera-probe/issues"
 
-# ============================================================
-# setuptools configuration (SRC layout)
-# ============================================================
 [tool.setuptools]
 package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
-
-# ============================================================
-# Ruff (lint)
-# ============================================================
 [tool.ruff]
-target-version = "py311"
+target-version = "py310"
 line-length = 100
-
-# Включаем только детект мёртвого кода
 select = ["F401", "F841"]
-
-# Исключаем виртуальные окружения и мусор
 exclude = [
     ".venv",
     "venv",
@@ -116,8 +85,5 @@ exclude = [
     "build",
     "dist",
 ]
-
-# Не трогаем __init__.py (часто используются для side-effect imports)
 ignore = ["F401"]
 per-file-ignores = { "__init__.py" = ["F401"] }
-

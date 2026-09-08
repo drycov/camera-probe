@@ -1,28 +1,22 @@
 from __future__ import annotations
 
-from typing import Optional, AsyncIterator
+from typing import AsyncIterator, Optional
 
 from camera_probe.application.dto.probe_request import ProbeRequest
 from camera_probe.application.dto.scan_request import ScanRequest
 from camera_probe.bootstrap.probe import build_probe_service
 from camera_probe.bootstrap.scan import build_scan_service
-from camera_probe.domain.models.probe_result import ProbeResult
 from camera_probe.domain.models.network_info import NetworkInfo
 from camera_probe.domain.models.ntp_info import NtpInfo
+from camera_probe.domain.models.probe_result import ProbeResult
 from camera_probe.version import __version__
 
 
-# ────────────────────────────────────────────────
-# Singleton application services
-# ────────────────────────────────────────────────
-
+# Build one application graph. Creating it twice used to duplicate discovery
+# engines and execute registry auto-import/freeze twice during module import.
 _probe_service = build_probe_service()
-_scan_service = build_scan_service()
+_scan_service = build_scan_service(probe_service=_probe_service)
 
-
-# ────────────────────────────────────────────────
-# Public API: probe
-# ────────────────────────────────────────────────
 
 async def probe(
     *,
@@ -33,7 +27,6 @@ async def probe(
     force: bool = False,
     prefer_force: bool = False,
 ) -> ProbeResult:
-
     request = ProbeRequest(
         ip=ip,
         username=username,
@@ -42,13 +35,8 @@ async def probe(
         force=force,
         prefer_force=prefer_force,
     )
-
     return await _probe_service.probe(request)
 
-
-# ────────────────────────────────────────────────
-# Public API: scan
-# ────────────────────────────────────────────────
 
 async def scan(
     *,
@@ -58,12 +46,7 @@ async def scan(
     timeout: float = 5.0,
     concurrency: int = 20,
 ) -> AsyncIterator[ProbeResult]:
-    """
-    Public API: scan a CIDR and yield ProbeResult objects.
-
-    Stable contract.
-    """
-
+    """Scan a CIDR and yield ProbeResult objects."""
     request = ScanRequest(
         cidr=cidr,
         username=username,
@@ -71,13 +54,9 @@ async def scan(
         timeout=timeout,
         concurrency=concurrency,
     )
-
     async for result in _scan_service.scan(request):
         yield result
 
-# ────────────────────────────────────────────────
-# Public exports
-# ────────────────────────────────────────────────
 
 __all__ = [
     "probe",
