@@ -71,7 +71,7 @@ def run_scan(args: argparse.Namespace, *, global_verbose: int = 0) -> None:
                 sys.stdout.flush()
                 first_result = False
             else:
-                print(f"{result.ip:15} {result.vendor or '-':10} {result.confidence:.2f}")
+                print(f"{result.ip:15} {result.vendor or '-':10} {result.confidence:.2f}", flush=True)
 
     try:
         asyncio.run(_run())
