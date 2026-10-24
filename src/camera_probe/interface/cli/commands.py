@@ -47,7 +47,7 @@ def run_scan(args: argparse.Namespace, *, global_verbose: int = 0) -> None:
     first_result = True
     if json_output:
         _configure_stdout()
-        sys.stdout.write("[\\n")
+        sys.stdout.write("[\n")
 
     async def _run() -> None:
         nonlocal first_result
@@ -60,7 +60,7 @@ def run_scan(args: argparse.Namespace, *, global_verbose: int = 0) -> None:
         ):
             if json_output:
                 if not first_result:
-                    sys.stdout.write(",\\n")
+                    sys.stdout.write(",\n")
                 sys.stdout.write(
                     json.dumps(
                         probe_result_to_dict(result),
@@ -80,7 +80,7 @@ def run_scan(args: argparse.Namespace, *, global_verbose: int = 0) -> None:
         raise SystemExit(130) from None
     finally:
         if json_output:
-            sys.stdout.write("]\\n" if first_result else "\\n]\\n")
+            sys.stdout.write("]\n" if first_result else "\n]\n")
             sys.stdout.flush()
 
 
