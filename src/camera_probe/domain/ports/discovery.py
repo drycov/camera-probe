@@ -19,5 +19,7 @@ class DiscoveryPort(ABC):
         ip: str,
         username: str | None = None,
         password: str | None = None,
+        timeout_per_port: float = 1.5,
+        max_total_timeout: float = 10.0,
     ) -> DetectResult:
         ...

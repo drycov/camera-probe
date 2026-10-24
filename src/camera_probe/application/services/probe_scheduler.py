@@ -16,6 +16,8 @@ class _Job:
     factory: Callable[[], Awaitable[object]]
     future: asyncio.Future[object]
     started: bool = False
+    task: asyncio.Task[object] | None = None
+    legacy_awaitable: Awaitable[object] | None = None
 
 
 class ProbeScheduler:
@@ -70,7 +72,13 @@ class ProbeScheduler:
                 consumed = True
                 return operation
 
-        job = _Job(priority, self._sequence, factory, future)
+        job = _Job(
+            priority,
+            self._sequence,
+            factory,
+            future,
+            legacy_awaitable=legacy_coroutine,
+        )
         self._sequence += 1
         await self._queue.put((int(priority), job.sequence, job))
 
@@ -79,7 +87,13 @@ class ProbeScheduler:
         except asyncio.CancelledError:
             if not future.done():
                 future.cancel()
-            if legacy_coroutine is not None and not job.started and hasattr(legacy_coroutine, "close"):
+            if job.task is not None and not job.task.done():
+                job.task.cancel()
+            elif (
+                legacy_coroutine is not None
+                and not job.started
+                and hasattr(legacy_coroutine, "close")
+            ):
                 legacy_coroutine.close()  # type: ignore[attr-defined]
             raise
 
@@ -90,17 +104,30 @@ class ProbeScheduler:
                 if job.future.cancelled():
                     continue
                 job.started = True
+
+                async def execute() -> object:
+                    return await job.factory()
+
+                job.task = asyncio.create_task(
+                    execute(),
+                    name=f"probe-job-{job.sequence}",
+                )
                 try:
-                    result = await job.factory()
+                    result = await job.task
                 except asyncio.CancelledError:
                     if not job.future.done():
                         job.future.cancel()
+                    worker = asyncio.current_task()
+                    if worker is not None and worker.cancelling():
+                        raise
                 except Exception as exc:
                     if not job.future.done():
                         job.future.set_exception(exc)
                 else:
                     if not job.future.done():
                         job.future.set_result(result)
+                finally:
+                    job.task = None
             finally:
                 self._queue.task_done()
 
@@ -112,6 +139,12 @@ class ProbeScheduler:
             _, _, job = self._queue.get_nowait()
             if not job.future.done():
                 job.future.cancel()
+            if (
+                not job.started
+                and job.legacy_awaitable is not None
+                and hasattr(job.legacy_awaitable, "close")
+            ):
+                job.legacy_awaitable.close()  # type: ignore[attr-defined]
             self._queue.task_done()
         self._workers.clear()
         self._started = False

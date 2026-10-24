@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Optional
 
 from camera_probe.application.dto.probe_request import ProbeRequest
@@ -58,7 +59,13 @@ class ProbeService:
         return self._failure_result(request.ip, detect)
 
     async def _discover(self, request: ProbeRequest) -> DetectResult:
-        return await self._discovery.detect(ip=request.ip, username=request.username, password=request.password)
+        return await self._discovery.detect(
+            ip=request.ip,
+            username=request.username,
+            password=request.password,
+            timeout_per_port=request.timeout,
+            max_total_timeout=request.timeout,
+        )
 
     async def _try_vendor_probe(self, detect: DetectResult, request: ProbeRequest) -> Optional[ProbeResult]:
         if not self._can_vendor_probe(detect):
@@ -98,3 +105,10 @@ class ProbeService:
     def _validate_request(request: ProbeRequest) -> None:
         if not request.ip:
             raise ValueError("IP address is required")
+        if (
+            isinstance(request.timeout, bool)
+            or not isinstance(request.timeout, (int, float))
+            or not math.isfinite(request.timeout)
+            or request.timeout <= 0
+        ):
+            raise ValueError("timeout must be a finite number greater than 0")
