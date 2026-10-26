@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import json
 import sys
-from ipaddress import ip_network
 
 from camera_probe.api import probe as probe_api
 from camera_probe.api import scan as scan_api
@@ -44,9 +43,14 @@ def run_probe(args: argparse.Namespace, *, global_verbose: int = 0) -> None:
 def run_scan(args: argparse.Namespace, *, global_verbose: int = 0) -> None:
     apply_verbosity(max(global_verbose, getattr(args, "command_verbose", 0) or 0))
 
-    results: list[ProbeResult] = []
+    json_output = bool(args.json_output)
+    first_result = True
+    if json_output:
+        _configure_stdout()
+        sys.stdout.write("[\n")
 
     async def _run() -> None:
+        nonlocal first_result
         async for result in scan_api(
             cidr=args.cidr,
             username=args.username,
@@ -54,27 +58,41 @@ def run_scan(args: argparse.Namespace, *, global_verbose: int = 0) -> None:
             timeout=args.timeout,
             concurrency=args.concurrency,
         ):
-            results.append(result)
+            if json_output:
+                if not first_result:
+                    sys.stdout.write(",\n")
+                sys.stdout.write(
+                    json.dumps(
+                        probe_result_to_dict(result),
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                )
+                sys.stdout.flush()
+                first_result = False
+            else:
+                print(f"{result.ip:15} {result.vendor or '-':10} {result.confidence:.2f}", flush=True)
 
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
         print("Interrupted", file=sys.stderr)
         raise SystemExit(130) from None
-
-    if args.json_output:
-        _print_json([probe_result_to_dict(result) for result in results])
-        return
-
-    for result in results:
-        print(f"{result.ip:15} {result.vendor or '-':10} {result.confidence:.2f}")
+    finally:
+        if json_output:
+            sys.stdout.write("]\n" if first_result else "\n]\n")
+            sys.stdout.flush()
 
 
-def _print_json(payload: object) -> None:
+def _configure_stdout() -> None:
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
+
+
+def _print_json(payload: object) -> None:
+    _configure_stdout()
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
